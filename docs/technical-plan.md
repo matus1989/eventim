@@ -253,7 +253,7 @@ Skrypt wypisuje linie `WERDYKT=<kod>`, `bramka=TAK/NIE`, `hops=N` i zapisuje
 - [x] Podsumowanie na górze strony runa (`GITHUB_STEP_SUMMARY`)
 - [x] Osobne kody wyjścia dla wyniku testu i dla awarii programu
 - [x] Test chroni `github.com` w User-Agentzie przed podmianą na e-mail
-- [ ] Wynik z prawdziwego runnera udokumentowany w repo (bramka)
+- [x] Wynik z prawdziwego runnera udokumentowany w repo (bramka) — run `37183741624`, `WERDYKT=OK`, `hops=5`
 
 ---
 
@@ -754,7 +754,7 @@ brak alertów.
 
 | # | Ryzyko | Prawdopod. | Wpływ | Mitygacja | Właściciel |
 |---|---|---|---|---|---|
-| R1 | **Runner GitHub Actions zablokowany (IP centrum danych)** | wysokie | krytyczny | Faza 0 jako bramka; `BlockedByIpError`; ostrzeżenie z cooldownem; rozmiar 16 KB jako detektor; §11.1 | właściciel |
+| R1 | Runner zablokowany przez Akamai (dany zakres IP) | ~~wysokie~~ niskie | krytyczny → średni | **Rozstrzygnięte 4.10.2026 na runnerze: bramka przeszła** (AS8075 Azure, sklep pobrany). Kod `BlockedByIpError` zostaje jako diagnoza, nie ścieżka awaryjna; §11.1 | właściciel |
 | R2 | Zmiana markupu / struktury JSON-LD | średnie | średni | parser z fallbackami + testy na prawdziwych fixture'ach; `ParseError` zamiast cichego `False` | właściciel |
 | R3 | Zmiana handshake Queue-it | średnie | wysoki | test live wykrywający przed wdrożeniem; `FetchError` z liczbą hopów | właściciel |
 | R4 | Telegram niedostępny przy alertach | niskie | wysoki | 1 ponowienie + `exit 1`, żeby widać było w UI Actions | właściciel |
@@ -767,8 +767,14 @@ brak alertów.
 
 ### 11.1 R1 — plan awaryjny dla blokady IP
 
+> **Status: nieaktywny.** Faza 0 przeszła na runnerze (run `37183741624`),
+> więc żadna z poniższych ścieżek nie jest potrzebna dla tego projektu.
+> Zachowujemy sekcję, bo blokada IP jest realna dla *innych* adresów — to nie
+> informacja o Gunicie, tylko o Akamai. Jeśli kiedyś monitoring przestanie
+> pobierać stronę, `BlockedByIpError` wskaże tę sekcję.
+
 Ustalona decyzja: **tylko GitHub Actions hosted**, bez runnera własnego.
-Jeśli Faza 0 da wynik negatywny, kolejność rozważania:
+Jeśli kiedyś Faza 0 da wynik negatywny, kolejność rozważania:
 
 1. **Ponowna weryfikacja po 24–48 h** — odrzucamy, że to anomalia sieciowa.
 2. **Wariant UA** — zmiana nagłówków i User-Agent (testowaliśmy Chrome UA → 403,
@@ -789,11 +795,17 @@ musi eksponować to przez `exit 1` + ostrzeżenie Telegram, a nie przez ciszę.
 
 | # | Pytanie | Wpływ |
 |---|---|---|
-| P1 | Czy faza 0 da wynik pozytywny na `ubuntu-latest`? | decyduje o całym planie |
+| P1 | ~~Czy faza 0 da wynik pozytywny na `ubuntu-latest`?~~ | **TAK** — 4.10.2026, run `37183741624`, `hops=5`, 6 terminow |
 | P2 | Czy `chale`/`InStock` pojawi się w JSON-LD w formie oczekiwanej przez czarną listę? | wiarygodność alertów |
 | P3 | Czy queue-it zdąży zablokować częstsze sprawdzanie niż 1/h? | częstotliwość cronu |
 | P4 | Czy cache `actions/cache` to właściwe miejsce na cookies, czy lepiej bez cache? | 5 hopów vs 1 hop |
 | P5 | Czy utrzymywać alert co godzinę w nieskończoność przy długim okresie dostępności? | Faza 8, R8 |
 
-P1 jest jedynym pytaniem blokującym. P2–P5 mają bezpieczne wartości domyślne
-i są świadomie odłożone.
+**P1 jest rozstrzygnięte** (run `37183741624`): tak, `ubuntu-latest` pobiera
+stronę sklepu. Plan można realizować w założeniu „hosted runner działa".
+
+P2–P5 mają bezpieczne wartości domyślne i są świadomie odłożone. Odpowiedź na
+P2 przyszła przy okazji Fazy 0 — z 6 terminów wszystkie miały `SoldOut`, więc
+czarna lista nadal nie została sprawdzona na stanie `InStock`/`chale`/`PreSale`
+na żywo. Nie jest to blokada: ADR-5 mówi „wszystko poza SoldOut”, a nieprawidłowy
+stan trafiłby do alertu i byłby widoczny.

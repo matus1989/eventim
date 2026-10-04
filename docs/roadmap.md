@@ -12,14 +12,17 @@
 
 ## Status
 
-Fazy 0–4 mają kod i testy. Faza 0 jest **bramką: kod jest gotowy, wynik z
-prawdziwego runnera jeszcze nie.** Dopóki go nie ma, żadna z faz nie jest
-„gotowa do wdrożenia” — Faza 7 uruchamia dokładnie to samo pobieranie co
-proba, tylko z orkiestracją i sekretami.
+Fazy 0–4 mają kod i testy. **Faza 0 przeszła na prawdziwym runnerze**
+(run `37183741624`, 4.10.2026) — fundament planu jest potwierdzony, więc fazy
+5–8 można realizować bez zmiany założenia o środowisku wykonania.
+
+Jedyna rzecz weryfikowana „na żywo" to pobieranie strony. Dostarczanie wiadomości
+do Telegramu nadal nie zostało sprawdzone na prawdziwym tokenie — Faza 7 musi
+to domknąć, zanim uznamy monitoring za działający.
 
 | Faza | Nazwa | Stan |
 |---|---|---|
-| 0 | Walidacja na runnerze GitHub Actions | 🚧 **bramka** — koder gotowy, wynik z runnera czeka |
+| 0 | Walidacja na runnerze GitHub Actions | ✅ **przeszła** — `hops=5`, 6 terminow, run `37183741624` |
 | 1 | Szkielet projektu i konfiguracja | ✅ |
 | 2 | Klient Eventim + handshake Queue-it | ✅ |
 | 3 | Parser JSON-LD i model dostępności | ✅ |
@@ -31,71 +34,87 @@ proba, tylko z orkiestracją i sekretami.
 
 ---
 
-## Faza 0 — Walidacja na runnerze GitHub Actions ⛔
+## Faza 0 — Walidacja na runnerze GitHub Actions ✅
 
 **Cel:** dowiedzieć się, czy plan w ogóle jest wykonalny, zanim napiszemy resztę.
 
-**Blokada:** wynik §2.5 dokumentacji architektury — z IP centrum danych
-(strona marketingowa zamiast sklepu) pobieranie deterministycznie zawodzi.
-Hosted runners to IP chmury Azure.
+**Powód, dla którego to była bramka:** wynik §2.5 dokumentacji architektury
+wskazywał, że z IP centrum danych pobieranie deterministycznie kończy się stroną
+marketingową zamiast sklepu, a hosted runners to IP chmury Azure. Okazało się
+jednak, że hipoteza była zbyt szeroka — patrz wynik poniżej.
 
-**Zakres:** tymczasowy workflow `probe.yml` (~30 linii), który na `ubuntu-latest`
-uruchamia dokładnie algorytm 5-hopowy z §3.2 i wypisuje liczbę hopów oraz
-próbę sparsowania JSON-LD.
+**Zakres:** workflow `probe.yml` (110 linii) plus `scripts/probe.py` (613 linii),
+który na `ubuntu-latest` uruchamia dokładnie algorytm 5-hopowy z §3.2, wypisuje
+liczbę hopów, próbuje sparsować JSON-LD i zapisuje 6 możliwych werdyktów do
+artefaktu.
 
 **Metryka sukcesu:** `hops == 5` **i** znaleziony `EventSeries` z 6 `subEvent`.
 
 **Warianty wyniku:**
 
-| Wynik | Działanie |
-|---|---|
-| Działa | Faza 0 ✓ → kontynuować zgodnie z planem |
-| Nie działa (strona marketingowa / 403) | Podjąć decyzję z §„Ścieżki eskalacji” — projekt **nie** jest blokowany na zawsze, ale wymaga zmiany założenia |
+| Wynik | Działanie | Trafiło? |
+|---|---|---|
+| Działa | Faza 0 ✓ → kontynuować zgodnie z planem | **tak** |
+| Nie działa (strona marketingowa / 403) | Podjąć decyzję z §„Ścieżki eskalacji” | nie |
 
 **Uwaga o kolejności:** fazy 1–3 warto zrobić **równolegle** — klient fetchu jest
 potrzebny do Fazy 0, więc nie ma sensu pisać go dwa razy.
 
-**Ścieżki eskalacji (gdyby Faza 0 negatywna):**
-- A. Ponowna weryfikacja po 24 h (chwilowa anomalia sieciowa).
-- B. Zmiana nagłówków / User-Agent na UA przeglądarki z pełnym nagłówkiem — testowane, ale Chrome UA → 403.
-- C. Runner spoza puli Azure (inny provider chmurowy, kontener, VPS) — zmiana założenia o „hosted”.
-- D. Akceptacja gorszego wariantu: runner na maszynie z dostępem do internetu poza chmurą.
+**Ścieżki eskalacji — zarchiwizowane, niepotrzebne** (gdyby Faza 0 była negatywna):
+- ~~A. Ponowna weryfikacja po 24 h (chwilowa anomalia sieciowa).~~
+- ~~B. Zmiana nagłówków / User-Agent na UA przeglądarki — testowane, Chrome UA → 403.~~
+- ~~C. Runner spoza puli Azure (inny provider chmurowy, kontener, VPS).~~
+- ~~D. Akceptacja gorszego wariantu: runner na maszynie z dostępem do internetu poza chmurą.~~
+
+Zachowane w planie technicznym §11.1 jako instrukcja na wypadek, gdyby kiedyś
+monitoring przestał pobierać stronę. Ścieżka D wymagałaby nowej zgody właściciela —
+stanowi świadome odejście od ustalenia „tylko hosted runner".
 
 **Zależności:** brak.
 **Kryterium zakończenia:** znany wynik z API runnera, udokumentowany w repo.
 
-**Stan (po implementacji):**
+**WYNIK: ✅ bramka przeszła (run `37183741624`, 4.10.2026, 26 s)**
 
-- Koder i workflow gotowe: `scripts/probe.py` + `.github/workflows/probe.yml`.
-- 40 testów (`tests/test_probe.py`) pokrywa **wszystkie werdykty**, nie tylko
-  ścieżkę sukcesu — błąd w skrypcie proby dawałby fałszywy werdykt, a to
-  gorsze niż brak odpowiedzi.
-- Wynik z prawdziwego runnera: **nie zebrano**. Bramka wciąż otwarta.
+```
+runner:   Linux 6.17.0-1022-azure, x86_64, Python 3.12.14
+IP:       172.185.143.245 — AS8075 Microsoft Corporation (Azure)
+handshake: 302 -> 200 -> 302 -> 302 -> 200 (152 034 B)
+JSON-LD:  U-Bahn-Cabriotour 2026, 6 terminow, SoldOut:6, nieznanych: 0
+WERDYKT=OK   hops=5   czas=3.7 s
+```
 
-**Odstępstwa od pierwotnego zakresu, świadome:**
+**Najważniejszy wniosek: hipoteza blokady IP centrum danych była błędna.**
 
-- Workflow uruchamia się też na `push` do `main` (dla ścieżek proby), więc sam
-  commit dodający `probe.yml` odpala bramkę. Bez tego trzeba byłoby pamiętać
-  o kliknięciu w UI.
-- Logika jest w skrypcie, nie w YAML. YAML ma ~30 linii i tylko orkiestruje.
-- `continue-on-error` przy probie + osobny krok „Werdykt”. Dzięki temu artefakt
-  z odpowiedzią sklepu powstaje **także przy niepowodzeniu** — bez niego nie
-  da się zdiagnozować, co faktycznie przyszło z hosta.
-- Matryca User-Agentów (4 warianty, tylko hop 1) uruchamia się **wyłącznie po
-  porażce**. Przy sukcesie dodatkowe zapytania tylko ryzykowałyby wyzwanie
-  Queue-it. Jej wynik rozdziela trzy sytuacje wyglądające identycznie
-  („nie działa”), ale z różnymi naprawami: winny UA, winny adres IP, albo biała
-  lista UA inna na runnerze niż na maszynie lokalnej (unieważniłaby ADR-2).
-- Sześć werdyktów zamiast tak/nie. Osobne `SZKICZ_BEZ_TERMINOW` (strona się
-  wczytała, ale `subEvent` pusty) i `JSON_LD_NIEPARSOWALNE`, bo „nie da się
-  pobrać” i „nie da się zrozumieć” to dwa różne problemy (ryzyko R1 vs R2).
+Cały plan opierał się na obserwacji, że z adresów centrum danych handshake
+kończy się stroną marketingową zamiast sklepu (§2.5 architektury). Runner
+GitHub Actions to **też** adres centrum danych — AS8075 Microsoft, dokładnie
+ten typ puli, którego baliśmy się — a sklep pobrał się normalnie.
 
-**Kody wyjścia:** `0` — bramka przeszła, `2` — nie przeszła. Inne niż `1`
-świadomie: `1` w tym repo oznacza błąd programu, a `2` jest wynikiem testu.
+Wniosek operacyjny: **Akamai nie blokuje całych klas adresów**, tylko
+konkretne, źle oceniane zakresy. Nasza maszyna lokalna (AS3320 Deutsche
+Telekom, adres prywatny) też działa. Zakres, na którym to nie działa, jest
+nieznany — i nie jest to runner GitHub Actions, więc nie dotyczy tego projektu.
 
-**Do odczytania z runa:** podsumowanie na górze strony runa (nie przewijany
-log) oraz artefakt `faza0-proba-<numer>` z pobraną stroną, `probe-report.json`
-i `probe-report.txt`.
+Konsekwencje:
+
+- **Ryzyko R1 spada z „krytyczne” na „niskie”** — dla tego runnera zostało
+  rozstrzygnięte pozytywnie.
+- **Pytanie P1 ma odpowiedź: TAK.**
+- Ścieżki eskalacji A–D z tej sekcji **nie są potrzebne**. Bezpiecznie je
+  zarchiwizować: R1 jest realnym ryzykiem dla *innych* adresów IP, więc kod
+  (`BlockedByIpError` + detektor strony marketingowej) zostaje — tylko jako
+  diagnoza, nie jako ścieżka awaryjna projektu.
+- `probe.yml` można usunąć. Ale **nie musi** — patrz pytanie o formę.
+
+**Weryfikacja fixture'a:** JSON-LD pobrany na runnerze jest **bajt w bajt
+identyczny** z `tests/fixtures/shop_soldout.html`. Parser został zwalidowany
+na prawdziwej stronie produkcyjnej, a fixture nadal jest aktualny.
+
+**Błąd znaleziony dzięki artefaktowi:** pierwsza wersja proby gubiła pole
+`srodowisko` w JSON-ie — `report, ... = fetch_shop(...)` zastępowało obiekt,
+a środowisko było przypisane do poprzedniego. W logu było, w artefakcie już
+nie, i nic o tym nie mówiło. Naprawione, z testem `test_raport_json_zawiera_opis_runnera`.
+Lekcja: **to, co widać tylko w logu, nie istnieje dla porównania runów**.
 
 ---
 

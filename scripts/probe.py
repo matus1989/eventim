@@ -569,14 +569,18 @@ def main(argv: list[str] | None = None) -> int:
     log.info("cel: %s", args.url)
     log.info("User-Agent: %s", args.user_agent)
 
-    report = Report(url=args.url, user_agent=args.user_agent)
-    report.srodowisko = describe_environment(args.url, args.timeout)
-    for klucz, wartosc in report.srodowisko.items():
+    # Srodowisko zbieramy do zmiennej, a nie do `report`, bo `fetch_shop`
+    # zwraca **nowy** obiekt Report i przypisanie `report, ... = fetch_shop(...)`
+    # po cichu gubilo caly opis runnera. Wykryte dopiero po pierwszym
+    # prawdziwym runie - w logu bylo, w artefakcie juz nie.
+    srodowisko = describe_environment(args.url, args.timeout)
+    for klucz, wartosc in srodowisko.items():
         log.info("srodowisko: %s = %s", klucz, wartosc)
 
     html, report, counter = fetch_shop(
         args.url, args.user_agent, args.timeout, args.max_hops
     )
+    report.srodowisko = srodowisko
     report.handshake = [m for m in counter.trace if m.startswith("[fetch]")]
 
     if html:

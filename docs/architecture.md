@@ -148,28 +148,44 @@ Metodologia: kolejne warianty testowane po 40–45 s, kolejność powtarzalna
 (3/3 OK vs 0/3 dla UA z e-mailem), więc efekt jest deterministyczny, a nie wynikiem
 chwilowego limitu tempa.
 
-### 2.5 Ryzyko numer jeden: reputacja adresu IP
+### 2.5 Reputacja adresu IP — hipoteza i jej rozstrzygnięcie
 
-To najważniejszy wynik całego badania.
+Pierwsza wersja tej sekcji nazywała to „ryzykiem numer jeden" i była **błędna**.
+
+**Hipoteza wyjściowa** (oparta na obserwacji z 4.10.2026): adresy centrum danych są
+blokowane przez Akamai, a GitHub Actions hosted runners to właśnie adresy centrum
+danych (chmura Azure) — więc projekt stoi na fundamentacie, który zawodzi.
 
 | Źródło ruchu | Wynik |
 |---|---|
-| IP domowe (ISP użytkownika) | **działa** — 3/3 zimne uruchomienia, 5 hopów, ~1–2 s |
-| IP centrum danych | **nie działa deterministycznie** — ślepy zaułek na stronie marketingowej |
+| IP domowe (ISP użytkownika, AS3320 Deutsche Telekom) | **działa** — 3/3 zimne uruchomienia, 5 hopów, ~1–2 s |
+| IP centrum danych, zakres nieznany | **nie działa deterministycznie** — ślepy zaułek na stronie marketingowej |
+| **GitHub Actions hosted runner** (AS8075 Microsoft, `172.185.143.245`) | **działa** — run `37183741624`, 4.10.2026, 5 hopów, 152 034 B, 3,7 s |
 
-Z IP centrum danych przebieg wygląda inaczej: hop 1 zwraca `200` (strona pośrednia)
-zamiast `302` do Queue-it, a hop po ustawieniu `cookietest` kończy się na stronie
-promocyjnej EVENTIM.Light (~16 000 B) zamiast na sklepie. Powtarzalne w 4/4 próbach,
-niezależnie od nagłówków `Sec-Fetch`.
+Z nieznanego zakresu centrum danych przebieg wygląda inaczej: hop 1 zwraca `200`
+(strona pośrednia) zamiast `302` do Queue-it, a hop po ustawieniu `cookietest`
+kończy się na stronie promocyjnej EVENTIM.Light (~16 000 B) zamiast na sklepie.
+Powtarzalne w 4/4 próbach, niezależnie od nagłówków `Sec-Fetch`.
 
-**Konflikt z decyzją:** GitHub Actions hosted runners to IP w chmurze Azure,
-czyli dokładnie ta kategoria, która deterministycznie zawodzi. Użytkownik świadomie
-wybrał wariant „tylko GitHub Actions hosted” — projekt zakłada więc tę ścieżkę,
-a faza 0 roadmapy jest **bramką jakościową**: wdrożenie nie zostaje uznane za zakończone,
-dopóki nie potwierdzimy na prawdziwym runnerze, że pobieranie danych działa.
+**Rozstrzygnięcie (Faza 0, 4.10.2026):** runner GitHub Actions pobrał prawdziwą stronę
+sklepu, wykonał pełne 5-hopowe handshake i zwrócił poprawny JSON-LD. Adres pochodził
+z chmury Azure — dokładnie ta kategoria, której baliśmy się.
 
-Dodatkowo skrypt **nie może być cichy przy awarii** — musi sam zgłosić, że przestał
-sprawdzać dostępność (patrz §5).
+Wniosek: **Akamai nie blokuje klasy „adres centrum danych”**, tylko konkretne,
+źle oceniane zakresy. Klasa jest zbyt szeroka, żeby z niej wyciągać wniosek
+o runnera. Konkretny zakres używany przez GitHub Actions nie jest zablokowany,
+a zakres, na którym to zadziałało, pozostaje nieznany — i w tym projekcie nieistotny.
+
+Dlatego:
+
+* bramka jakościowa z Fazy 0 **przeszła** i projekt realizuje się na założeniu
+  „hosted runner działa";
+* plan awaryjny §11.1 technicznego planu zostaje **zarchiwizowany, nieaktywny** —
+  blokada IP jest realna dla innych adresów, więc kod (`BlockedByIpError` +
+  detektor strony marketingowej) zostaje jako diagnoza;
+* skrypt nadal **nie może być cichy przy awarii** — musi sam zgłosić, że przestał
+  sprawdzać dostępność (patrz §5). Zmienił się tylko powód, dla którego to ważne:
+  nie „pewność, że zablokują", lecz „pewność, że sytuacja się zmieni".
 
 ### 2.6 Wydajność dzięki cache cookies
 

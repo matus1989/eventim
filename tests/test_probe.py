@@ -471,6 +471,22 @@ def test_raport_json_zawiera_werdykt_i_liczniki(proba, tmp_path):
 
 
 @responses.activate
+def test_raport_json_zawiera_opis_runnera(proba, tmp_path):
+    """Adres IP i organizacja mowia, z jakiej puli przyszedl run.
+
+    Pierwsza wersja proby gubila to pole: `report, ... = fetch_shop(...)`
+    zastapilo obiekt, a srodowisko bylo przypisane do poprzedniego.
+    W logu bylo, w artefakcie juz nie - czyli cicho, bez zadnego bledu.
+    """
+    register_handshake()
+
+    proba()
+
+    dane = report_from_disk(tmp_path)
+    assert dane["srodowisko"] == {"os": "test"}, "opis runnera zginal w artefakcie"
+
+
+@responses.activate
 def test_raport_tekstowy_zawiera_znacznik_wyjscia(proba, tmp_path):
     register_handshake()
 
