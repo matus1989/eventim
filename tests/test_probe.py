@@ -9,9 +9,9 @@ Dlatego testujemy wszystkie **werdykty**, nie tylko sciezke sukcesu. Do
 tego sam log i kody wyjscia, bo to one decyduja o tym, co zobaczy
 uzytkownik w UI GitHub Actions.
 
-Atrapy HTTP sa te same co w ``test_eventim.py`` - pelny pieciohopowy
-handshake Queue-it, bo proba musi uzywac produkcyjnego klienta, a nie
-uproszczonego zapytania.
+Atrapy HTTP mieszcza sie w ``conftest.py`` - pelny pieciohopowy handshake
+Queue-it, bo proba musi uzywac produkcyjnego klienta, a nie uproszczonego
+zapytania.
 """
 
 from __future__ import annotations
@@ -24,7 +24,27 @@ import sys
 
 import pytest
 import responses
-from conftest import make_html
+from conftest import (
+    INTERSTITIAL,
+    MARKETING_PAGE,
+    QUEUE_ENTRY_URL,
+    QUEUE_HOST,
+    RELOAD_URL,
+    SHOP_HTML,
+    TARGET,
+    make_html,
+    register_handshake,
+)
+
+#: Strona 403 Akamai - inny objaw odrzucenia niz strona marketingowa.
+#: Rozroznienie jest istotne: 403 to odpowiedz na zle naglowki (ADR-2),
+#: strona marketingowa to odpowiedz na adres IP (R1).
+AKAMAI_PAGE = (
+    "<html><head><title>Access Denied</title></head><body>"
+    "<h1>Access Denied</h1><p>You don't have permission to access "
+    '"/de/a/org" on this server. Reference #18.1f2a3b4c5d6e7f80</p>'
+    "</body></html>"
+)
 
 # Skrypt nie jest pakietem (jest jednorazowy), wiec ladujemy go wprost
 # z pliku. Instalacja w trybie edytowalnym nie obejmuje katalogu scripts/.
@@ -37,86 +57,6 @@ probe = importlib.util.module_from_spec(_SPEC)
 # po `cls.__module__` przy rozstrzyganiu typu pola z adnotacja.
 sys.modules["probe"] = probe
 _SPEC.loader.exec_module(probe)
-
-TARGET = "https://www.eventim-light.com/de/a/org/s/series"
-QUEUE_HOST = "eventimlight.queue-it.net"
-
-QUEUE_ENTRY_URL = (
-    f"https://{QUEUE_HOST}/"
-    "?c=eventimlight&e=shopde&t=https%3A%2F%2Fwww.eventim-light.com%2Fs"
-    "&tsr=1&tsh=2"
-)
-RELOAD_URL = (
-    "https://eventimlight.queue-it.net/"
-    "?c=eventimlight&e=shopde&t=https%3A%2F%2Fwww.eventim-light.com%2Fs"
-    "&cid=de-DE&tsr=1&tsh=2"
-)
-
-INTERSTITIAL = (
-    "<!DOCTYPE html><html><head><meta name=\"robots\" content=\"noindex\">"
-    "<script type='text/javascript'>"
-    "var cookieEnabled = navigator.cookieEnabled;"
-    "document.cookie = 'cookietest=1';"
-    "document.location.href = decodeURIComponent("
-    "'%2F%3Fc%3Deventimlight%26e%3Dshopde%26t%3Dhttps%253A%252F%252F"
-    "www.eventim-light.com%252Fs%26cid%3Dde-DE%26tsr%3D1%26tsh%3D2');"
-    "</script></head><body>"
-    "<div class=\"nocookies alert alert-error hidden\"><p></p></div>"
-    "</body></html>"
-)
-
-SHOP_HTML = make_html(
-    {
-        "@type": "EventSeries",
-        "name": "Test",
-        "url": TARGET,
-        "subEvent": [
-            {
-                "@type": "Event",
-                "startDate": "2026-10-09T19:00:00+02:00",
-                "offers": {"availability": "https://schema.org/SoldOut"},
-            }
-        ],
-    }
-)
-
-MARKETING_PAGE = (
-    "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\">"
-    "<title>Tickets verkaufen im eigenen Ticket-Shop | EVENTIM.Light</title>"
-    "<meta name=\"robots\" content=\"index,follow\">"
-    "</head><body><h1>Ticket-Shop</h1></body></html>"
-)
-
-AKAMAI_PAGE = (
-    "<html><head><title>Access Denied</title></head><body>"
-    "<h1>Access Denied</h1><p>You don't have permission to access "
-    '"/de/a/org" on this server. Reference #18.1f2a3b4c5d6e7f80</p>'
-    "</body></html>"
-)
-
-
-def register_handshake(final: str = SHOP_HTML, final_status: int = 200) -> None:
-    """Rejestruje pelny, pieciohopowy handshake Queue-it."""
-    responses.get(TARGET, status=302, headers={"Location": QUEUE_ENTRY_URL})
-    responses.get(QUEUE_ENTRY_URL, status=200, body=INTERSTITIAL)
-    responses.get(
-        RELOAD_URL,
-        status=302,
-        headers={
-            "Location": f"{TARGET}?queueittoken=e_shopde~ts_1~ce_true",
-            "Set-Cookie": f"Queue-it-token=tok123; Path=/; Domain={QUEUE_HOST}",
-        },
-    )
-    responses.get(
-        f"{TARGET}?queueittoken=e_shopde~ts_1~ce_true",
-        status=302,
-        headers={
-            "Location": TARGET,
-            "Set-Cookie": "QueueITAccepted-SDFrts345E-V3_shopde=acc; Path=/; "
-            "Domain=www.eventim-light.com",
-        },
-    )
-    responses.get(TARGET, status=final_status, body=final)
 
 
 def prawdziwa_strona() -> str:
@@ -619,7 +559,7 @@ def test_bramka_nie_przeszla_dla_kazdej_awarii(werdykt: str):
     assert probe.Report(verdict=werdykt).bramka_przeszla is False
 
 
-def test_domyślny_cel_to_wydarzenie_z_planu():
+def test_domyslny_cel_to_wydarzenie_z_planu():
     """Cel probe'a musi byc produkcyjnym adresem, nie przykladem.
 
     Inaczej wynik mowilby o dowolnym sklepie, a nie o tym, ktorym sie
@@ -631,7 +571,7 @@ def test_domyślny_cel_to_wydarzenie_z_planu():
     assert probe.parse_args(["--url", TARGET]).url == TARGET
 
 
-def test_werdykty_sa_stałymi_znanymi_w_dokumentacji():
+def test_werdykty_sa_stalymi_znanymi_w_dokumentacji():
     """Nazwy werdyktow trafiaja do runa i do dokumentacji - nie zmieniaja sie po cichu."""
     assert probe.V_OK == "OK"
     assert probe.V_IP == "BLOKADA_IP_STRONA_MARKETINGOWA"

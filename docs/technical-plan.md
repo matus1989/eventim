@@ -68,6 +68,7 @@ eventim/
 | `EVENTIM_MAX_HOPS` | nie | `12` | twardy limit przekierowań |
 | `EVENTIM_ERROR_COOLDOWN_HOURS` | nie | `6` | cisza między ostrzeżeniami o awarii |
 | `TELEGRAM_MAX_RETRIES` | nie | `1` | ponowienia przy błędzie wysyłki |
+| `EVENTIM_STATE_FILE` | nie | `.cache/eventim-state.json` | plik cookies i znaczników czasu; wskazywany przez `actions/cache` w Fazie 7 |
 
 ### Decyzje
 
@@ -97,10 +98,10 @@ opcjonalnie i wyłącznie poza kontrolą wersji.
 
 ### Kryteria akceptacji
 
-- [ ] Brak `TELEGRAM_BOT_TOKEN` → komunikat wymienia **wszystkie** braki, `exit 1`.
-- [ ] `EVENTIM_TIMEOUT=abc` → czytelny `ConfigError`, `exit 1`.
-- [ ] `EVENTIM_TARGET_URL` na obcej domenie → odrzucone.
-- [ ] Poprawna konfiguracja → obiekt `Config` z wartościami domyślnymi.
+- [x] Brak `TELEGRAM_BOT_TOKEN` → komunikat wymienia **wszystkie** braki, `exit 1`.
+- [x] `EVENTIM_TIMEOUT=abc` → czytelny `ConfigError`, `exit 1`.
+- [x] `EVENTIM_TARGET_URL` na obcej domenie → odrzucone.
+- [x] Poprawna konfiguracja → obiekt `Config` z wartościami domyślnymi.
 
 ---
 
@@ -215,12 +216,12 @@ znaczniku i **nie** podchodzimy do `FetchError` — zgłaszamy
 
 ### Kryteria akceptacji
 
-- [ ] Test na atrapach: pełna sekwencja 5 hopów → HTML z JSON-LD.
-- [ ] Test: strona pośrednia bez `Location` → `FetchError`, nie pętla.
-- [ ] Test: przekroczenie `max_hops` → `FetchError`.
-- [ ] Test: `403` → `FetchError` z kodem w komunikacie.
-- [ ] Test: strona marketingowa → `BlockedByIpError`.
-- [ ] Test: cookies wyeksportowane i odtworzone → drugie pobranie w 1 hopie.
+- [x] Test na atrapach: pełna sekwencja 5 hopów → HTML z JSON-LD.
+- [x] Test: strona pośrednia bez `Location` → `FetchError`, nie pętla.
+- [x] Test: przekroczenie `max_hops` → `FetchError`.
+- [x] Test: `403` → `FetchError` z kodem w komunikacie.
+- [x] Test: strona marketingowa → `BlockedByIpError`.
+- [x] Test: cookies wyeksportowane i odtworzone → drugie pobranie w 1 hopie.
 
 ---
 
@@ -302,7 +303,6 @@ class Series:
     def any_available(self) -> bool:
         return bool(self.available_terms)
 
-
 def parse_series(html: str) -> Series:      # ParseError przy braku/malformacji
 ```
 
@@ -346,12 +346,12 @@ Błędem jest dopiero brak parsowalnego JSON-LD albo jego brak.
 
 ### Kryteria akceptacji
 
-- [ ] Fixture `shop_soldout.html` → 6 terminów, wszystkie `SoldOut`, `any_available == False`.
-- [ ] Fixture `shop_available.html` → `any_available == True`, poprawne `url` i ceny.
-- [ ] `LimitedAvailability`, `PreOrder`, `PreSale` → dostępne.
-- [ ] Brak `subEvent` → pusta lista, bez wyjątku.
-- [ ] Uszkodzony JSON → `ParseError` z czytelnym komunikatem.
-- [ ] Brak `application/ld+json` → `ParseError`, nie `AttributeError`.
+- [x] Fixture `shop_soldout.html` → 6 terminów, wszystkie `SoldOut`, `any_available == False`.
+- [x] Fixture `shop_available.html` → `any_available == True`, poprawne `url` i ceny.
+- [x] `LimitedAvailability`, `PreOrder`, `PreSale` → dostępne.
+- [x] Brak `subEvent` → pusta lista, bez wyjątku.
+- [x] Uszkodzony JSON → `ParseError` z czytelnym komunikatem.
+- [x] Brak `application/ld+json` → `ParseError`, nie `AttributeError`.
 
 ---
 
@@ -461,9 +461,30 @@ Przechowywany kształt:
   "last_check_ok": true,
   "last_check_at": "2026-10-04T12:17:33+00:00",
   "last_error_notified_at": null,
+  "last_anomaly_notified_at": null,
   "last_availability_state": "none_available"
 }
 ```
+
+### Odstępstwo z Fazy 5: osobny kanał ostrzegania o anomalii
+
+Pole `last_anomaly_notified_at` **nie było** w pierwotnym kontrakcie.
+Doszło z Fazy 5, razem z realizacją ADR-9.
+
+Powód: anomalia braku pola `availability` to **inny problem** niż awaria
+pobierania, ale obie rzeczy potrzebują wyciszenia co 6 h. Przy jednym
+wspólnym znaczniku czasu scenariusz „awaria pobierania o 01:00, anomalia
+o 02:00” wyglądałby tak: ostrzeżenie o awarii wyszło, godzinę później
+świeży problem z anomalii zostałby wyciszony jako „wciąż w cooldownie”
+i pozostał cichy.
+
+Osobne kanały kosztują jedno pole w JSON-ie i całkowicie eliminują tę
+klasę cichego pominięcia. `should_warn_anomaly()` świadomie nie czyta
+`last_check_ok` — mieszanie kanałów pozwoliłoby jednemu wyciszyć drugi.
+
+To **dwa niezależne kanały ostrzegania**, nie dwa etapu jednego procesu.
+Blok zapisu stanu powyżej pokazuje to dobrze: poprawny odczyt z nieudanym
+wysłaniem ostrzeżenia wygląda właśnie tak — oba znaczniki `null`.
 
 ### Decyzje
 
@@ -496,11 +517,11 @@ token nigdy nie trafia do cache ani do repo.
 
 ### Kryteria akceptacji
 
-- [ ] `save()` → `load()` odtwarza identyczny stan.
-- [ ] Brak pliku cache → `load()` zwraca stan domyślny, bez wyjątku.
-- [ ] Uszkodzony JSON → stan domyślny, bez wyjątku.
-- [ ] Nieznana `schema_version` → cookies pominięte.
-- [ ] `save()` przy niedostępnym katalogu → brak wyjątku.
+- [x] `save()` → `load()` odtwarza identyczny stan.
+- [x] Brak pliku cache → `load()` zwraca stan domyślny, bez wyjątku.
+- [x] Uszkodzony JSON → stan domyślny, bez wyjątku.
+- [x] Nieznana `schema_version` → cookies pominięte.
+- [x] `save()` przy niedostępnym katalogu → brak wyjątku.
 
 ---
 
@@ -513,16 +534,29 @@ token nigdy nie trafia do cache ani do repo.
 2.  state = store.load(); client.load_cookies(state["cookies"])
 3.  try:  html = client.fetch_html(config.target_url)
     except (FetchError, BlockedByIpError) as e:
-4.      store.save(błąd, cookies=bez zmian)      # cookies nie kasujemy
-5.      czy minęło >= cooldown_since(state)?  tak -> Telegram ostrzeżenie + zapis ts
-                                                  nie -> wycisz
-6.      exit 1
-7.  series = parse_series(html)         ParseError -> traktowane jak błąd fetchu (6)
-8.  store.save(cookies, last_check_ok=True)     # PRZED wysyłką
-9.  if series.any_available:  Telegram(format_available(...))
-10. else:                     nic
-11. exit 0
+4.      ostrzec = should_warn(stan)   # stan POPRZEDNIEGO runu
+5.      store.save(błąd, cookies=bez zmian)   # cookies zostają
+6.      ostrzec?  tak -> Telegram ostrzeżenie + zapis ts
+                  nie -> wycisz
+7.      exit 1
+8.  series = parse_series(html)    ParseError -> jak błąd fetchu (7)
+9.  store.save(cookies, last_check_ok=True)    # PRZED wysyłką
+10. if series.any_available:  Telegram(format_available(...))
+11. else:                     nic
+12. if series.has_unknown:      # ADR-9
+        ostrzec_anomalia?  tak -> Telegram(format_unknown_availability(...))
+                           nie -> wycisz (osobny cooldown)
+        exit 1
+13. exit 0
 ```
+
+Trzy miejsca w tej kolejności są umowne, nie stylistyczne:
+
+| Kolejność | Co by się stało w odwrotnej |
+|---|---|
+| `should_warn` (4) **przed** zapisem stanu (5) | `should_warn` zobaczyłby `last_check_ok is False` z bieżącego runu i uznał świeżą awarię za „kolejną” — pierwsze ostrzeżenie byłoby ciche |
+| `store.save` (9) **przed** wysyłką (10) | martwy Telegram gubiłby cookies, kolejny run znów robiłby 5 hopów zamiast 1 |
+| alert o biletach (10) **przed** anomalią (12) | ostrzeżenie o niepewności przyćmiłoby informację, o którą użytkownik prosił |
 
 ### Kody wyjścia
 
@@ -535,6 +569,20 @@ token nigdy nie trafia do cache ani do repo.
 Rozróżnienie „nie ma biletów” vs „nie wiem” jest celowe: `0` przy braku
 dostępności nie zaśmieca powiadomień, a `1` przy awarii nie udaje,
 że monitoring działa.
+
+**Anomalia też daje `1`.** Dodane w Fazie 5 i najbardziej kontrowersyjna
+z tych decyzji. Argumenty obu stron:
+
+* *za `0`*: gdyby Eventim trwale przestał wysyłać `availability`, runy byłyby
+  czerwone bez przerwy — szum, do którego użytkownik się przyzwyczai;
+* *za `1`*: monitoring **nie odpowiada** na pytanie, o które go poproszono,
+  dla części terminów. Czerwony run to jedyny sygnał, który zostaje, gdy
+  Telegram nie działa.
+
+Wybrano `1`. Koszt błędu jest asymetryczny: fałszywy „zielony” run brzmi
+„biletów nie ma, nic się nie dzieje”, a to jest najgorszy możliwy komunikat
+dla człowieka czekającego na wejściówki. Wyciszenie dotyczy **wiadomości**
+(cooldown), nie czerwonych runów — te są darmowe i informacyjne.
 
 ### Cooldown
 
@@ -567,17 +615,28 @@ po wdrożeniu.
 | Wyjątek z `send()` gubi błąd pobrania | brak diagnozy | `raise ... from e` + kolejność kroków |
 | Ostrzeżenie co godzinę | 24 wiadomości/dobę o awarii | cooldown 6 h |
 | Sukces przy błędzie wysyłki | fałszywie „zielony” run | `exit 1` |
+| Wspólny znacznik czasu dla awarii i anomalii | świeży problem wyciszony przez cudzy cooldown | dwa kanały: `last_error_notified_at` i `last_anomaly_notified_at` |
+| Logowanie `None -> none_available` | wiersz „zmiana stanu” w każdym wdrożeniu, nie do odróżnienia od prawdziwej zmiany | logujemy tylko gdy poprzedni stan istnieje |
+| `last_availability_state` jako bramka powiadomień | przestaje ostrzegać o biletach, które **wciąż są** | pole wyłącznie informacyjne; alert powtarza się w każdym runie (wymaganie właściciela) |
 | `last_check_ok` nie resetowany po awarii | wieczne wyciszenie | zapisywane w obu ścieżkach |
 
 ### Kryteria akceptacji
 
-- [ ] Wszystkie SoldOut → brak wysyłki, `exit 0`.
-- [ ] Fixture z InStock → jedna wiadomość, `exit 0`.
-- [ ] Zerwany fetch → jedno ostrzeżenie, `exit 1`.
-- [ ] Drugi błąd w ciągu cooldownu → **bez** wiadomości, `exit 1`.
-- [ ] Po przekroczeniu cooldownu → kolejne ostrzeżenie.
-- [ ] Błąd Telegram przy alercie o dostępności → `exit 1`.
-- [ ] Błąd Telegram przy ostrzeżeniu o awarii → `exit 1`, pierwotny błąd w logu.
+- [x] Wszystkie SoldOut → brak wysyłki, `exit 0`.
+- [x] Fixture z InStock → jedna wiadomość, `exit 0`.
+- [x] Zerwany fetch → jedno ostrzeżenie, `exit 1`.
+- [x] Drugi błąd w ciągu cooldownu → **bez** wiadomości, `exit 1`.
+- [x] Po przekroczeniu cooldownu → kolejne ostrzeżenie.
+- [x] Błąd Telegram przy alercie o dostępności → `exit 1`.
+- [x] Błąd Telegram przy ostrzeżeniu o awarii → `exit 1`, pierwotny błąd w logu.
+- [x] Kolejność: cookies widoczne w pliku stanu **w momencie** próby wysyłki.
+- [x] Kolejność: świeży problem po powrocie do zdrowia zgłoszony mimo trwającego cooldownu.
+- [x] Powtórzony stan dostępności wysyła alert ponownie (bez limitu, bez deduplikacji).
+- [x] Brak pola `availability` → ostrzeżenie o anomalii, `exit 1`, osobny cooldown.
+- [x] Anomalia i awaria pobierania wyciszają się **niezależnie**.
+- [x] Token Telegrama nie pojawia się ani w logach, ani w pliku stanu.
+- [x] Awaria wysyłki nie psuje zapisanego stanu (`last_check_ok`, cookies).
+- [x] Brak możliwości zapisu stanu → `exit 0`, komunikat w logu.
 
 ---
 

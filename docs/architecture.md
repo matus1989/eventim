@@ -337,6 +337,8 @@ z Fazy 5.
 | ADR-7 | Ostrzeżenie o awarii z cooldownem 6 h | milczenie / ostrzeżenie co godzinę | przy Faza 0 realnym ryzyku milczenie = cicha utrata monitoringu |
 | ADR-8 | Wersjonowany schemat cache | cache „na wiarę” | zmiana User-Agentu lub struktury unieważnia cookies |
 | ADR-9 | Brak pola `availability` = `UNKNOWN`, **nie** alert | traktowanie braku danych jak dostępności | zmiana markupu zasypywałaby fałszywymi alarmami; `UNKNOWN` raportowany osobno (Faza 5) |
+| ADR-10 | Osobny kanał ostrzegania dla anomalii (`last_anomaly_notified_at`) | jeden wspólny znacznik czasu z ADR-7 | wspólny znacznik pozwala świeżej anomalii zniknąć pod cudzym cooldownem — ciche pominięcie najgorszego rodzaju |
+| ADR-11 | `last_availability_state` **nie** steruje powiadomieniami | alert tylko przy zmianie stanu | wymaganie właściciela: ostrzegać przy każdym uruchomieniu, gdy bilety są; deduplikacja uciszyłaby monitoring właśnie wtedy, gdy działa |
 
 ## 4. Przepływ decyzyjny uruchomienia
 

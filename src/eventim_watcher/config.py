@@ -23,11 +23,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
+from eventim_watcher.state import DEFAULT_STATE_PATH
+
 __all__ = [
     "ALLOWED_HOST_SUFFIX",
     "Config",
     "ConfigError",
     "DEFAULT_USER_AGENT",
+    "DEFAULT_STATE_PATH",
     "OPTIONAL_VARS",
     "REQUIRED_VARS",
 ]
@@ -76,6 +79,7 @@ OPTIONAL_VARS = (
     "EVENTIM_TIMEOUT",
     "EVENTIM_MAX_HOPS",
     "EVENTIM_ERROR_COOLDOWN_HOURS",
+    "EVENTIM_STATE_FILE",
     "TELEGRAM_MAX_RETRIES",
 )
 
@@ -123,6 +127,7 @@ class Config:
     max_hops: int = 12
     error_cooldown_hours: float = 6.0
     telegram_max_retries: int = 1
+    state_path: str = DEFAULT_STATE_PATH
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Config:
@@ -152,6 +157,10 @@ class Config:
 
         user_agent = raw["EVENTIM_USER_AGENT"] or DEFAULT_USER_AGENT
 
+        # Sciezka cache nie jest sekretem ani wartoscia wymagana - cache to
+        # optymalizacja, wiec brak zmiennej ma byc cichy i bezpieczny.
+        state_path = raw["EVENTIM_STATE_FILE"] or DEFAULT_STATE_PATH
+
         if problems:
             raise ConfigError(problems)
 
@@ -164,6 +173,7 @@ class Config:
             max_hops=max_hops,
             error_cooldown_hours=cooldown,
             telegram_max_retries=retries,
+            state_path=state_path,
         )
 
     def summary(self) -> str:

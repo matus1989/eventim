@@ -15,8 +15,12 @@ Nazwy w tym sklepie mają spacje i myślniki, więc ryzyko jest realne.
 linku sklepu i wiadomość wygląda jak reklama zamiast alertu.
 
 **Token nigdy nie trafia do logu ani do treści wyjątku.** Adres API ma token
-w ścieżce, więc odpowiedź API przy błędzie może go wyechoować. Komunikat
-błędu budujemy z **opisu** HTTP, nigdy z surowego ciała odpowiedzi.
+w ścieżce, więc odpowiedź API i wyjątek ``requests`` mogą go wyechoować.
+Komunikat błędu budujemy z **opisu** HTTP, nigdy z surowego ciała odpowiedzi,
+a każdy tekst, który mimo to trafi do logu, przechodzi przez ``_redact()``.
+Ta ostatnia warstwa nie jest nadgorliwością: token w logu runu GitHub Actions
+jest jawny dla każdego, kto ma dostęp do repozytorium lub do logów publicznie
+zachowanych runów.
 """
 
 from __future__ import annotations
@@ -127,7 +131,12 @@ class TelegramNotifier:
                 )
             except requests.RequestException as exc:
                 # Wyjątek sieciowy jest odwracalny, więc ponawiamy.
-                ostatni_blad = f"{exc.__class__.__name__}: {exc}"
+                #
+                # `str(exc)` **zawiera pełny URL**, a URL ma token w ścieżce.
+                # Wykryte w teście CLI: przy błędzie połączenia token lądował
+                # w logu, wbrew obietnicy z docstringu modułu. Stąd _redact
+                # zamiast ufania temu, co wyjątek zwraca.
+                ostatni_blad = self._describe_exception(exc)
                 log.warning("[telegram] fragment %d/%d: %s", index, total, ostatni_blad)
                 continue
 
@@ -135,7 +144,7 @@ class TelegramNotifier:
                 log.info("[telegram] wyslano fragment %d/%d", index, total)
                 return
 
-            opis = self._describe(response)
+            opis = self._redact(self._describe(response))
             ostatni_blad = opis
 
             if self._is_retryable(response.status_code):
@@ -155,6 +164,21 @@ class TelegramNotifier:
     def _api_url(self) -> str:
         """Buduje adres API. Token wchodzi tu i tylko tu."""
         return f"{TELEGRAM_API_BASE}/bot{self._bot_token}/sendMessage"
+
+    def _redact(self, text: str) -> str:
+        """Zastepuje token w tekście, który mógł trafić do logu lub wyjątku.
+
+        Jedyne miejsce w repo, w którym token pojawia się w postaci jawnej, to
+        adres API. Wyjątki ``requests`` oraz niektóre odpowiedzi API echoują ten
+        URL, więc zamiast polegać na źródle wyjątku — usuwamy token wprost.
+        """
+        if not self._bot_token:
+            return text
+        return text.replace(self._bot_token, "<token>")
+
+    def _describe_exception(self, exc: Exception) -> str:
+        """Opis wyjątku sieciowego bez tokenu."""
+        return self._redact(f"{exc.__class__.__name__}: {exc}")
 
     def _payload(self, text: str) -> dict[str, object]:
         """Buduje ciało żądania.

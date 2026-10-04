@@ -1,10 +1,7 @@
 """Testy klienta HTTP: handshake Queue-it, cookies, wykrywanie anomalii.
 
-Wazna ograniczenie biblioteki ``responses``, o ktorym trzeba pamietac:
-**nie przekierowuje sama** i **nie przenosi cookies miedzy hopami**.
-Dlatego kazdy hop jest rejestrowany recznie - tak jak w realsci.
-To jednoczesnie czyni testy dowodem na poprawnosc obslugi przekierowan
-i cookies, a nie tylko sprawdzeniem parsowania odpowiedzi.
+Atrapa handshake mieszka w ``conftest.py`` — wspoldzielona z ``test_probe.py``
+i testami orkiestracji. Jedna definicja pieciu hopow zamiast trzech.
 """
 
 from __future__ import annotations
@@ -14,7 +11,19 @@ import json
 import pytest
 import requests
 import responses
-from conftest import FIXTURES, HTML_TEMPLATE, make_html
+from conftest import (
+    FIXTURES,
+    HTML_TEMPLATE,
+    INTERSTITIAL,
+    MARKETING_PAGE,
+    QUEUE_ENTRY_URL,
+    QUEUE_HOST,
+    RELOAD_URL,
+    SHOP_HTML,
+    TARGET,
+    make_html,
+    register_handshake,
+)
 
 from eventim_watcher.eventim import (
     BlockedByIpError,
@@ -27,94 +36,9 @@ from eventim_watcher.eventim import (
     new_session,
 )
 
-TARGET = "https://www.eventim-light.com/de/a/org/s/series"
-QUEUE_HOST = "eventimlight.queue-it.net"
-
-#: Zwykly wynik: strona sklepu z JSON-LD.
-SHOP_HTML = make_html(
-    {
-        "@type": "EventSeries",
-        "name": "Test",
-        "url": TARGET,
-        "subEvent": [
-            {
-                "@type": "Event",
-                "startDate": "2026-10-09T19:00:00+02:00",
-                "offers": {"availability": "https://schema.org/InStock"},
-            }
-        ],
-    }
-)
-
-#: Strona posrednia Queue-it (prawdziwa struktura, odtworzona z przechwytu).
-INTERSTITIAL = (
-    "<!DOCTYPE html><html><head><meta name=\"robots\" content=\"noindex\">"
-    "<script type='text/javascript'>"
-    "var cookieEnabled = navigator.cookieEnabled;"
-    "document.cookie = 'cookietest=1';"
-    "document.location.href = decodeURIComponent("
-    "'%2F%3Fc%3Deventimlight%26e%3Dshopde%26t%3Dhttps%253A%252F%252F"
-    "www.eventim-light.com%252Fs%26cid%3Dde-DE%26tsr%3D1%26tsh%3D2');"
-    "</script></head><body>"
-    "<div class=\"nocookies alert alert-error hidden\"><p></p></div>"
-    "</body></html>"
-)
-
-RELOAD_URL = (
-    "https://eventimlight.queue-it.net/"
-    "?c=eventimlight&e=shopde&t=https%3A%2F%2Fwww.eventim-light.com%2Fs"
-    "&cid=de-DE&tsr=1&tsh=2"
-)
-
-QUEUE_ENTRY_URL = (
-    f"https://{QUEUE_HOST}/"
-    "?c=eventimlight&e=shopde&t=https%3A%2F%2Fwww.eventim-light.com%2Fs"
-    "&tsr=1&tsh=2"
-)
-
-#: Strona marketingowa zamiast sklepu (objaw odrzucenia adresu IP).
-MARKETING_PAGE = (
-    "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\">"
-    "<title>Tickets verkaufen im eigenen Ticket-Shop | EVENTIM.Light</title>"
-    "<meta name=\"robots\" content=\"index,follow\">"
-    "</head><body><h1>Ticket-Shop</h1></body></html>"
-)
-
-
 def make_client(user_agent: str = "eventim-watch/1.0 (test)", **kwargs) -> EventimClient:
+    """Klient z domyslnymi dostawkami, zeby testy nie powtarzaly argumentow."""
     return EventimClient(new_session(), user_agent=user_agent, **kwargs)
-
-
-def register_handshake(*, final: str = SHOP_HTML, final_status: int = 200):
-    """Rejestruje pelny, pieciohopowy handshake Queue-it.
-
-    Kolejnosc jest deterministyczna, wiec ``responses`` dopasowuje po
-    dokladnym URL - bez dopasowywania po regulach.
-    """
-    responses.get(
-        TARGET,
-        status=302,
-        headers={"Location": QUEUE_ENTRY_URL},
-    )
-    responses.get(QUEUE_ENTRY_URL, status=200, body=INTERSTITIAL)
-    responses.get(
-        RELOAD_URL,
-        status=302,
-        headers={
-            "Location": f"{TARGET}?queueittoken=e_shopde~ts_1~ce_true",
-            "Set-Cookie": f"Queue-it-token=tok123; Path=/; Domain={QUEUE_HOST}",
-        },
-    )
-    responses.get(
-        f"{TARGET}?queueittoken=e_shopde~ts_1~ce_true",
-        status=302,
-        headers={
-            "Location": TARGET,
-            "Set-Cookie": "QueueITAccepted-SDFrts345E-V3_shopde=acc; Path=/; "
-            "Domain=www.eventim-light.com",
-        },
-    )
-    responses.get(TARGET, status=final_status, body=final)
 
 
 # --- pelny handshake --------------------------------------------------------
@@ -452,7 +376,7 @@ def test_limit_hopow_przekroczony():
 
 
 @responses.activate
-def test_limit_hopow_domyślnie_12():
+def test_limit_hopow_domyslnie_12():
     responses.get(TARGET, status=302, headers={"Location": TARGET})
 
     with pytest.raises(FetchError, match="limit 12 hopow"):

@@ -128,7 +128,7 @@ def test_poprawne_wyslanie_zwraca_liczbe_wiadomosci():
 
 
 @responses.activate
-def test_pusty_tekst_nie_wysyła_nic():
+def test_pusty_tekst_nie_wysyla_nic():
     """Pusta wiadomość to błąd orkiestracji - nie ma sensu odpytywać API."""
     assert notifier().send("   \n  ") == 0
     assert len(responses.calls) == 0

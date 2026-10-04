@@ -7,7 +7,6 @@ w komunikacie, którego użytkownik nie zobaczy w logach.
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta, timezone
 
 import pytest

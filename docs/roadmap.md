@@ -27,7 +27,7 @@ to domknąć, zanim uznamy monitoring za działający.
 | 2 | Klient Eventim + handshake Queue-it | ✅ |
 | 3 | Parser JSON-LD i model dostępności | ✅ |
 | 4 | Notyfikacja Telegram | ✅ kod + testy, **nie sprawdzone na Telegramie** |
-| 5 | Orkiestracja, awarie, cooldown | 🔲 |
+| 5 | Orkiestracja, awarie, cooldown | ✅ |
 | 6 | Testy i walidacja end-to-end | 🔲 |
 | 7 | Workflow i dokumentacja | 🔲 |
 | 8 | Hardening i obserwowalność | 🔲 |
@@ -315,6 +315,28 @@ Pułapki z listy powyżej potwierdziły się w praktyce — każda dostała wła
 ostrzeżenie, a kolejne niepowodzenia są wyciszone; exit code poprawny.
 
 **Zależności:** Fazy 2, 3, 4.
+
+**Stan (po implementacji):**
+
+- Zrealizowana — `state.py` + `main.py`, 85 testów
+  (`tests/test_state.py` 49, `tests/test_main.py` 36). Cały zestaw: 375 testów w 3 s,
+  bez sieci.
+- Dwa odstępstwa od planu, oba zapisane w `technical-plan.md` §2 i §6:
+  1. **`EVENTIM_STATE_FILE`** — zmienna środowiskowa zamiast zakodowanej ścieżki.
+     Bez niej `actions/cache` musiałoby zgadywać katalog; teraz ścieżka jest jawna.
+  2. **`last_anomaly_notified_at`** — osobny kanał ostrzegania dla anomalii
+     `UNKNOWN`. Przy jednym wspólnym znaczniku czasu świeża anomalia zgłoszona
+     godzinę po ostrzeżeniu o awarię zniknęłaby bez powodu.
+- Kody wyjścia rozszerzone o trzeci przypadek: anomalia markupu też daje `1`.
+  Uzasadnienie i argumenty przeciw — `technical-plan.md` §7.
+- `last_availability_state` jest **wyłącznie informacyjne**. Wymaganie właściciela
+  brzmi: alert o biletach leci przy każdym uruchomieniu, bez limitu i bez
+  porównywania z poprzednim runem (`test_alert_leci_przy_kazdym_uruchomieniu_bez_limitu`).
+- Bezpieczeństwo: `str(exc)` z `requests` zawiera pełny adres API wraz z tokenem
+  Telegrama. `telegram.py` ma `_redact()` i `_describe_exception()` — bez nich
+  token lądowałby w logach i w tekście wyjątku.
+- Kolejność jest egzekwowana testami, nie komentarzem: cookies widoczne w pliku
+  stanu **w momencie** próby wysyłki (`test_cookies_sa_zapisane_przed_proba_wysylki`).
 
 ---
 
