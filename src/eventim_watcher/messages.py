@@ -29,7 +29,6 @@ __all__ = [
     "MAX_MESSAGE_CHARS",
     "format_available",
     "format_fetch_error",
-    "format_no_tickets",
     "format_unknown_availability",
     "format_price",
     "format_term_date",
@@ -135,28 +134,6 @@ def format_available(
     stopka = f"Sprawdzono: {format_timestamp(chwila)} UTC"
 
     return _join(naglowek, *bloki, stopka)
-
-
-def format_no_tickets(
-    series: Series,
-    *,
-    now: datetime | None = None,
-) -> str:
-    """Informacja o braku dostępnych biletów.
-
-    Wysyłana nawet gdy nie ma dostępnych terminów — użytkownik prosił
-    o wiadomość przy każdym sprawdzeniu, nie tylko przy alertach.
-    """
-    chwila = _as_utc(now)
-    return "\n".join(
-        [
-            "BRAK DOSTĘPNYCH BILETÓW",
-            "",
-            f"Seria: {series.name}",
-            f"Wszystkie terminy ({len(series.terms)}) są obecnie niedostępne.",
-            f"Sprawdzono: {format_timestamp(chwila)} UTC",
-        ]
-    )
 
 
 def _format_term_block(term: Term, index: int) -> str:
