@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Testy
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Sekrety - nigdy nie commitowac
+.env
+.env.*
+*.secret
+
+# Cache stanu (cookies sesji - wazne, nie udostepniac)
+.cache/
+state/
+*.cookiejar

@@ -1,0 +1,309 @@
+# Roadmap — Eventim Ticket Watcher
+
+## Zasady
+
+1. **Faza 0 jest bramką.** Dopóki nie potwierdzimy na prawdziwym runnerze GitHub Actions,
+   że pobieranie danych działa, żadna kolejna faza nie jest „gotowa do wdrożenia".
+2. **Każda faza kończy się uruchomialnym artefaktem**, nie tylko kodem.
+3. **Brak skrótów w testach fetchu.** Testy jednostkowe na atrapach nie dowodzą,
+   że handshake działa — dowodzi to jedynie test integracyjny (§Faza 6).
+4. Fazy 1–4 to **blok budowania fazy 0**: potrzebujemy działającego klienta,
+   żeby cokolwiek zweryfikować na runnerze.
+
+## Status
+
+Wszystkie fazy niezrealizowane — dokument jest planem, nie opisem stanu faktycznego.
+
+| Faza | Nazwa | Priorytet |
+|---|---|---|
+| 0 | Walidacja na runnerze GitHub Actions | ⛔ **bramka** — cały projekt zależy od niej |
+| 2 | Klient Eventim + handshake Queue-it | ⛔ **krytyczna** — najtrudniejszy element, buduje Fazę 0 |
+| 1 | Szkielet projektu i konfiguracja | 🔲 |
+| 3 | Parser JSON-LD i model dostępności | 🔲 |
+| 4 | Notyfikacja Telegram | 🔲 |
+| 5 | Orkiestracja, awarie, cooldown | 🔲 |
+| 6 | Testy i walidacja end-to-end | 🔲 |
+| 7 | Workflow i dokumentacja | 🔲 |
+| 8 | Hardening i obserwowalność | 🔲 |
+
+---
+
+## Faza 0 — Walidacja na runnerze GitHub Actions ⛔
+
+**Cel:** dowiedzieć się, czy plan w ogóle jest wykonalny, zanim napiszemy resztę.
+
+**Blokada:** wynik §2.5 dokumentacji architektury — z IP centrum danych
+(strona marketingowa zamiast sklepu) pobieranie deterministycznie zawodzi.
+Hosted runners to IP chmury Azure.
+
+**Zakres:** tymczasowy workflow `probe.yml` (~30 linii), który na `ubuntu-latest`
+uruchamia dokładnie algorytm 5-hopowy z §3.2 i wypisuje liczbę hopów oraz
+próbę sparsowania JSON-LD.
+
+**Metryka sukcesu:** `hops == 5` **i** znaleziony `EventSeries` z 6 `subEvent`.
+
+**Warianty wyniku:**
+
+| Wynik | Działanie |
+|---|---|
+| Działa | Faza 0 ✓ → kontynuować zgodnie z planem |
+| Nie działa (strona marketingowa / 403) | Podjąć decyzję z §„Ścieżki eskalacji” — projekt **nie** jest blokowany na zawsze, ale wymaga zmiany założenia |
+
+**Uwaga o kolejności:** fazy 1–3 warto zrobić **równolegle** — klient fetchu jest
+potrzebny do Fazy 0, więc nie ma sensu pisać go dwa razy.
+
+**Ścieżki eskalacji (gdyby Faza 0 negatywna):**
+- A. Ponowna weryfikacja po 24 h (chwilowa anomalia sieciowa).
+- B. Zmiana nagłówków / User-Agent na UA przeglądarki z pełnym nagłówkiem — testowane, ale Chrome UA → 403.
+- C. Runner spoza puli Azure (inny provider chmurowy, kontener, VPS) — zmiana założenia o „hosted”.
+- D. Akceptacja gorszego wariantu: runner na maszynie z dostępem do internetu poza chmurą.
+
+**Zależności:** brak.
+**Kryterium zakończenia:** znany wynik z API runnera, udokumentowany w repo.
+
+---
+
+## Faza 1 — Szkielet projektu i konfiguracja
+
+**Cel:** działający szkielet uruchamiany na maszynie, wczytujący ENV.
+
+**Zakres:**
+- `pyproject.toml` — `requests`, `pytest`, `responses`; `requires-python = ">=3.11"`.
+- `.gitignore` — `__pycache__/`, `.pytest_cache/`, `.venv/`, `*.egg-info/`, `.env`.
+- `src/eventim_watcher/config.py` — dataclass `Config`, walidacja i czytelne komunikaty błędów.
+- `src/eventim_watcher/__init__.py`, `__main__.py`.
+- Test: poprawna konfiguracja się wczytuje; brak sekretu → czytelny błąd, nie `KeyError`.
+
+**Pułapki:**
+- `.env` **nigdy** nie trafia do repo. Sekrety wyłącznie przez GitHub Secrets.
+- Nazwy zmiennych ustalone raz: `EVENTIM_TARGET_URL`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`.
+
+**Kryterium zakończenia:** `python -m eventim_watcher` kończy się czytelnym
+komunikatem o brakującym sekrecie; `pytest` przechodzi.
+
+**Zależności:** brak.
+
+---
+
+## Faza 2 — Klient Eventim + handshake Queue-it 🔏 krytyczna
+
+**Cel:** pobrać prawdziwą stronę sklepu. To najtrudniejszy element całego projektu.
+
+**Zakres:**
+- `src/eventim_watcher/eventim.py` — `EventimClient`:
+  - `requests.Session` z nagłówkami z ADR-2 (UA zawierający `github.com` — patrz
+    architektura §2.4, pomiar 13 wariantów).
+  - `allow_redirects=False` i maszyna stanów z ADR-3.
+  - Detekcja strony pośredniej: `"cookieEnabled" in text and "cookietest" in text`.
+  - Ustawienie `cookietest=1` w domenie bieżącego hosta — **domena musi odpowiadać
+    `eventimlight.queue-it.net`, nie `www.eventim-light.com`** (potwierdzone: przy
+    złej domenie handshake nie domyka się).
+  - Wyodrębnienie URL-a przeładowania z `document.location.href = decodeURIComponent('…')`
+    — **wymagane `unquote()`**, parametr jest zakodowany podwójnie.
+  - `max_hops = 12`, `timeout = 30`; przekroczenie → `FetchError`.
+  - Wyjątki: `FetchError` (obejmuje nietypowe stany, błędy sieciowe i limity hopów).
+- Testy jednostkowe na atrapach (`responses`): poprawna sekwencja 5 hopów,
+  wykrycie strony pośredniej, limit hopów, timeout, 403.
+
+**Pułapki (potwierdzone empirycznie):**
+- `dokument.location.href` jest zakodowane **podwójnie** — bez `unquote` pętla się nie kończy.
+- `Location` może być **względne** — zawsze `urljoin`.
+- Follow-up do Queue-it musi nosić `Referer` z poprzedniego hopu.
+- `responses` nie symuluje automatycznie `Location` — trzeba rejestrować redirecty ręcznie.
+- Pusty `Location` przy `3xx` → natychmiastowy błąd, nie ponowienie w nieskończoność.
+
+**Kryterium zakończenia:** testy jednostkowe na atrapach przechodzą;
+zadziała też test integracyjny z Fazy 6.
+
+**Zależności:** Faza 1.
+
+---
+
+## Faza 3 — Parser JSON-LD i model dostępności
+
+**Cel:** z HTML wyciągnąć listę terminów ze statusem dostępności.
+
+**Zakres:**
+- `src/eventim_watcher/models.py` — `Term` (frozen dataclass) + `UNAVAILABLE`.
+- `src/eventim_watcher/parser.py`:
+  - Wyciągnięcie `<script type="application/ld+json">` (z flagą `re.S`).
+  - `json.loads` → znalezienie węzła `@type == "EventSeries"` w `@graph`
+    (nie zakładać, że jest pierwszy).
+  - `offers.availability` → `rsplit("/", 1)[-1]` (wartość to pełny URI `schema.org`).
+- Testy jednostkowe: JSON-LD z **realnym** payloadem zapisanym w `tests/fixtures/`
+  (dane z 4.10.2026), warianty `SoldOut` / `InStock` / `LimitedAvailability` /
+  `PreOrder`, brak `subEvent`, uszkodzony JSON, `AggregateOffer` bez `availability`.
+
+**Pułapki:**
+- Nazwy wydarzeń zawierają nietypowe znaki i spacje — nie normalizować bez potrzeby
+  (potrzebne w komunikacie Telegram).
+- Daty mają offset `+02:00` — nie konwertować na UTC przy wyświetlaniu,
+  bo „19:00” w Berlinie to „19:00”, a nie „17:00”.
+- `AggregateOffer.availability` bywa **absentne** — traktować jako `Unknown`,
+  czyli **niedostępne do czasu potwierdzenia** (ADR-9), i zaznaczyć w logu jako
+  anomalię markupu. Świadoma korekta wobec pierwotnej wersji planu: brak pola
+  to nie informacja o dostępności, lecz brak danych.
+
+**Kryterium zakończenia:** parser zwraca 6 terminów z zapisanego fixture;
+test wariantów dostępności przechodzi.
+
+**Zależności:** brak (parser operuje na tekście HTML, nie na sieci).
+
+---
+
+## Faza 4 — Notyfikacja Telegram
+
+**Cel:** wysyłka wiadomości w języku polskim, zwykłym tekstem.
+
+**Zakres:**
+- `src/eventim_watcher/telegram.py` — `TelegramNotifier`:
+  - `POST {TELEGRAM_BOT_URL}/sendMessage` z `chat_id`, `text`,
+    `disable_web_page_preview = true`.
+  - `parse_mode` **ustawione na `None`** — świadoma decyzja (ADR: plain text).
+  - Obsługa błędów: `raise_for_status()`, mapowanie na `NotifyError`.
+  - Timeout i **jedna** ponowna próba — bez niej alert o biletach ginie.
+- Formatowanie `src/eventim_watcher/messages.py` — czyste funkcje, łatwe do przetestowania:
+  - `format_available(series, terms)` → alert z listą dostępnych terminów, cenami, linkiem.
+  - `format_fetch_error(target, error)` → ostrzeżenie o awarii.
+- Testy: formatowanie (snapshoty tekstu), wysyłka na atrapze, błąd API.
+
+**Pułapki:**
+- Telegram ma limit 4096 znaków na wiadomość → przy wielu terminach potrzebny podział
+  na chunki po ~3500 znaków. Uwzględnić od początku.
+- `disable_web_page_preview = true` inaczej Telegram generuje podgląd dla linku do sklepu.
+- Nie wstawiać `parse_mode` — przy znakach `_`, `*`, `` ` `` w nazwach wydarzeń
+  Markdown by się zepsuł. Nazwy wydarzeń tutaj mają `-`, ale „SONDERFAHRT” pokazuje,
+  że spacje i myślniki się zdarzają.
+- Nie logować `BOT_TOKEN` — odpowiedzi API mogą go echoować w błędach.
+
+**Kryterium zakończenia:** testy formatowania i wysyłki przechodzą;
+na Telegramie widać poprawny komunikat.
+
+**Zależności:** Faza 3 (formatowanie używa modelu `Term`).
+
+---
+
+## Faza 5 — Orkiestracja, awarie, cooldown
+
+**Cel:** powiązać komponenty w `main.py` i obsłużyć scenariusze awarii.
+
+**Zakres:**
+- `src/eventim_watcher/state.py` — `StateStore` z cache GitHub (adapter `StateBackend`,
+  dziś `actions/cache`, jutro dowolny inny):
+  - `load_state() / save_state()` — cookies + `last_error_notified_at` + `last_check_ok`.
+- `src/eventim_watcher/main.py` — przepływ z §4 dokumentacji architektury:
+  1. konfiguracja → 2. cookies → 3. pobranie → 4. parsowanie → 5. ocena → 6. Telegram → 7. zapis.
+- Kody wyjścia: `0` = sukces (także „brak dostępności”), `1` = nie udało się sprawdzić.
+- Cooldown 6 h na ostrzeżenie o awarii.
+- Logowanie strukturalne (sekcje, czytelne w logach Actions).
+
+**Pułapki:**
+- `actions/cache` ma twardy limit 10 GB/repozytorium i jest **ewiektowany** po 7 dniach
+  bez trafienia — dlatego klient musi działać poprawnie także bez cache (5 hopów).
+- Zapis cache **przed** wysyłką Telegram: martwy Telegram nie może powodować utraty cookies.
+- Wyjątek w fazie „wyślij Telegram o awarii” nie może maskować pierwotnego błędu —
+  złapać, zalogować, nie podnosić dalej.
+- Nie kasować cookies przy błędzie — mogą być wciąż ważne i przyspieszyć następny raz.
+
+**Kryterium zakończenia:** przy celowo zerwanym fetchu skrypt wysyła jedno
+ostrzeżenie, a kolejne niepowodzenia są wyciszone; exit code poprawny.
+
+**Zależności:** Fazy 2, 3, 4.
+
+---
+
+## Faza 6 — Testy i walidacja end-to-end
+
+**Cel:** udowodnić, że handshake działa na żywo — tego nie da się zasymulować.
+
+**Zakres:**
+- Testy jednostkowe (atrapy `responses`) — dla faz 2–4, bez sieci.
+- Fixture z prawdziwym HTML zapisanym offline → test parsera bez sieci.
+- `tests/test_live.py::test_live_fetch` — **wymuszany wyłącznik**, np. `EVENTIM_LIVE=1`,
+  domyślnie `skip`. Nie uruchamia się w zwykłym CI.
+- Uruchomienie raz na runnerze GitHub Actions: `pytest -m live`.
+- Smok: na razie wszystkie terminy `SoldOut` → oczekiwany **brak** alertu, kod `0`.
+
+**Pułapki:**
+- Test live w głównym pipeline’ie = samoobciążanie cudzej strony. Tylko na wyraźne żądanie.
+- `skipif` musi być oparty na zmiennej środowiskowej, żeby nie dało się przypadkiem włączyć.
+- Testy jednostkowe nie mogą udawać testów live — świadomie je rozdzielić i tak nazywać.
+
+**Kryterium zakończenia:** `pytest` zielony bez sieci; `pytest -m live` potwierdza
+dostępność na runnerze.
+
+**Zależności:** Fazy 2–5.
+
+---
+
+## Faza 7 — Workflow i dokumentacja
+
+**Cel:** wdrożyć na GitHub Actions.
+
+**Zakres:**
+- `.github/workflows/watch.yml`:
+  - `on: schedule: - cron: "17 * * * *"` — **celowo minuta 17**, nie `0`:
+    cron co godzinę w szczycie minuty jest najbardziej obciążony na GitHub,
+    przez co uruchomienia bywają opóźnione o kilka–kilkanaście minut.
+  - `workflow_dispatch` do ręcznego uruchomienia i diagnostyki.
+  - `permissions: contents: read` — minimalne uprawnienia.
+  - `concurrency: group: ticket-watch, cancel-in-progress: false` — brak nakładania
+    się uruchomień.
+  - `timeout-minutes: 10` — twardy limit, żeby wiszący fetch nie ciągnął minuty.
+  - `actions/checkout@v4`, `actions/setup-python@v5` (cache `pip`), `actions/cache@v4`.
+  - Sekrety przez `${{ secrets.* }}` — **nigdy** przez `vars`.
+  - Job summary (`$GITHUB_STEP_SUMMARY`) — czytelny raport w UI.
+- `README.md` — opis, instrukcja konfiguracji sekretów, lokalne uruchomienie,
+  tabela „co oznacza status runa”.
+- Sekrety do zdefiniowania: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`.
+
+**Pułapki:**
+- `schedule` na publicznym repo jest throttlowany i **opóźniony o kilka minut** — to norma.
+- Workflow **nie działa** na forkach; sekrety są niedostępne w PR-ach.
+- Cron nie gwarantuje wykonania co godzinę przy dużym obciążeniu platformy.
+- Brak `workflow_dispatch` = brak możliwości szybkiej diagnostyki.
+
+**Kryterium zakończenia:** ręczne uruchomienie `workflow_dispatch` przechodzi
+i widać raport; cron zaświeci się w zakładce Actions.
+
+**Zależności:** Fazy 5, 6.
+
+---
+
+## Faza 8 — Hardening i obserwowalność
+
+**Cel:** ograniczyć ryzyko po tym, jak monitoring już działa.
+
+**Zakres:**
+- **Odzyskanie po wyczerpaniu limitu cron** — sprawdzić, czy planowane 720 uruchomień
+  miesięcznie mieści się w limicie publicznych repozytoriów (~2000 min/mies.).
+  Zmierzyć realny czas wykonania i zaplanować ewentualne rzadsze sprawdzanie.
+- Rozważyć alert po **ciszy**: osobny tani cron (np. co 24 h) sprawdzający,
+  czy `watch` w ogóle ostatnio się powiódł — chroni przed sytuacją
+  „watch padł i nikt nie wie” przez całą dobę.
+- Opcjonalnie ADR-4: rozszerzenie o stronę terminu `/e/` dla granulacji per typ biletu.
+- Opcjonalnie: `--dry-run` do podglądu wiadomości bez wysyłki.
+
+**Pułapka:** limit crona liczy **minuty uruchomienia**, nie liczbę uruchomień —
+krótki skrypt jest tu zaletą i powodem decyzji o cache cookies.
+
+**Kryterium zakończenia:** limit crona zweryfikowany; alert o ciszy działa.
+
+**Zależności:** Faza 7.
+
+---
+
+## Kolejność i równoległość
+
+```
+Faza 1 ──┬──► Faza 2 ──┐
+         │             ├──► Faza 5 ──┬──► Faza 6 ──┬──► Faza 7 ──► Faza 8
+         └──► Faza 3 ──┤             │             │
+                    ───┴──► Faza 4 ──┘             │
+                                                    │
+Faza 2 (+3) ────────────────────────────────────────┴──► Faza 0 (bramka)
+```
+
+Faza 0 korzysta z klienta powstałego w Fazie 2 — dlatego nie jest pierwsza w kodzie,
+tylko pierwsza w wartości: **jej wynik może unieważnić cały plan**, więc należy ją
+przepuścić zaraz po Fazie 2, przed pisaniem reszty.

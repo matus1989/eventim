@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eventim-watcher"
+version = "0.1.0"
+description = "Sprawdza dostepnosc biletow na Eventim Light i powiadamia przez Telegram"
+readme = "Readme.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+dependencies = [
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "responses>=0.25",
+]
+
+[project.scripts]
+eventim-watch = "eventim_watcher.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "live: testy na prawdziwym sklepie; wymagaja EVENTIM_LIVE=1",
+]
