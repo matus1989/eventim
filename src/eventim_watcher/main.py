@@ -52,6 +52,7 @@ from eventim_watcher.eventim import (
 from eventim_watcher.messages import (
     format_available,
     format_fetch_error,
+    format_no_tickets,
     format_unknown_availability,
 )
 from eventim_watcher.models import Series
@@ -270,29 +271,36 @@ def run(
         raport.dostepnych = len(series.available_terms)
         raport.nieznanych = len(series.unknown_terms)
 
-    # -- alert o dostepnosci -----------------------------------------------
+    # -- powiadomienia o biletach ------------------------------------------
 
     if series.any_available:
         # Bez limitu powtorzen i bez porownania z poprzednim runem: decyzja
         # wlasciciela brzmi "alert przy kazdym dostepnym terminie".
         tekst = format_available(series, series.available_terms, now=chwila)
-        try:
-            wyslane = notifier.send(tekst)
-        except NotifyError as exc:
-            # Nie wyciszamy: bilety sa, komunikat nie dotarl. To sytuacja
-            # wymagajaca reakcji, wiec run musi byc widoczny jako blad.
-            log.error("[telegram] alert o dostepnosci nie zostal wyslany: %s", exc)
-            if raport is not None:
-                raport.wynik = WYNIK_BLAD_ALERTA
-                raport.wysylka = WYSYLKA_BLAD
-            return EXIT_FAILURE
-        log.info("[telegram] alert wyslany (%d wiadomosci)", wyslane)
-        if raport is not None:
-            raport.wynik = WYNIK_ALERT
-            raport.wysylka = WYSYLKA_WYSLANA
     else:
-        log.info("[telegram] brak dostepnych terminow - nie wysylam alertu")
+        # Wszystkie terminy sa niedostepne — wiadomosc informacyjna.
+        tekst = format_no_tickets(series, now=chwila)
+
+    try:
+        wyslane = notifier.send(tekst)
+    except NotifyError as exc:
+        # Nie wyciszamy: wiadomosc nie dotarla. To sytuacja wymagajaca
+        # reakcji, wiec run musi byc widoczny jako blad.
+        log.error("[telegram] wiadomosc nie zostala wyslana: %s", exc)
         if raport is not None:
+            raport.wysylka = WYSYLKA_BLAD
+            if series.any_available:
+                raport.wynik = WYNIK_BLAD_ALERTA
+            else:
+                raport.wynik = WYNIK_BRAK
+        return EXIT_FAILURE
+
+    log.info("[telegram] wiadomosc wyslana (%d wiadomosci)", wyslane)
+    if raport is not None:
+        raport.wysylka = WYSYLKA_WYSLANA
+        if series.any_available:
+            raport.wynik = WYNIK_ALERT
+        else:
             raport.wynik = WYNIK_BRAK
 
     # -- anomalia braku pola availability (ADR-9) ---------------------------

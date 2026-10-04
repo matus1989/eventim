@@ -5,7 +5,7 @@
 # w minutach limitu crona, a blama push-triggered niczego nie mowi, czego nie
 # powiedzialby ten plik.
 #
-# Cztery rzeczy, ktore latwo skopiowac bez zastanowienia:
+# Piec rzeczy, ktore latwo skopiowac bez zastanowienia:
 #
 # 1. **Sekret tylko przez `secrets.*`.** `vars.*` nie chroni niczego, a GitHub
 #    pokazuje ich wartosc w logu. `EVENTIM_TARGET_URL` idzie przez `vars.*`
@@ -21,6 +21,16 @@
 #    dniach cache oznacza zimne pobranie (piec hopow, ~1,2 s zamiast ~0,1 s) -
 #    wynik identyczny. `tests/test_main.py::test_poprawnosc_nie_zalezy_od_cache`
 #    pilnuje, zeby ta degradacja byla faktycznie bezpieczna.
+# 5. **Kazda zmienna opcjonalna jest przekazana z `vars.*`.** Zmienna ustawiona
+#    w repozytorium, ktorej workflow nie czyta, wyglada w dokumentacji jak
+#    dzialajaca, a nie robi absolutnie nic - to najgorszy rodzaj cichej awarii.
+#    `tests/test_workflow.py` bierze liste z `config.OPTIONAL_VARS`, wiec nowa
+#    zmienna w kodzie bez odpowiednika w `watch.yml` wywala test, a nie runa
+#    o trzy miesiace pozniej.
+#
+# Nieprzekazanie pustej zmiennej jest **bezpieczne** i to nie przypadek:
+# GitHub podstawia `""`, a `Config.from_env()` traktuje `""` jako brak i bierze
+# wartosc domyslna. Ten sam zapis obsluguje "nie ustawiono" i "wyczyszczono".
 #
 # `pytest -m "not live"` przed wlasciwym krokiem kosztuje ok. 25 s na godzine
 # (ok. 300 min/mies. z limitu ~2000). Jest celowe: zielony run mowi, ze
@@ -52,6 +62,15 @@ jobs:
     # Wiszace zadanie HTTP marnuje budzet crona. Realnie wystarcza ~2 s;
     # 10 min to zapas na ciezki dzień, nie na czekanie w nieskonczonosc.
     timeout-minutes: 10
+
+    # Zmienne opcjonalne to **zmienne** repozytorium
+    # (Settings -> Variables), nie sekrety — zadna z nich nie jest tajemnicą.
+    # Jedyna rzecz, która trafia tu spoza `vars.*`, to domyślna ścieżka pliku
+    # stanu: `||` w wyrażeniu GitHuba to odpowiednik `?:` w Pythonie, więc
+    # niezdefiniowana zmienna daje dokładnie ten sam napis co `Config.state_path`.
+    env:
+      EVENTIM_STATE_FILE: ${{ vars.EVENTIM_STATE_FILE || '.cache/eventim-state.json' }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -74,7 +93,11 @@ jobs:
       - name: Cache cookies sesji
         uses: actions/cache@v4
         with:
-          path: .cache
+          # Sciezka cache to **ten sam** napis co plik stanu programu, a nie
+          # wpisany na sztywno `.cache`. Rozdzielenie ich oznaczaloby, ze
+          # wlasna `EVENTIM_STATE_FILE` po cichu omijalaby cache - i kazde
+          # sprawdzenie wracaloby do pieciohopowego handshake'u bez powodu.
+          path: ${{ env.EVENTIM_STATE_FILE }}
           # Klucz unikalny na przebieg: przy stalym kluczu GitHub zapisuje tylko
           # wtedy, gdy go nie bylo, a cookies zmieniaja sie po kazdym ruchu.
           key: eventim-state-${{ github.run_id }}
@@ -88,6 +111,17 @@ jobs:
           EVENTIM_TARGET_URL: ${{ vars.EVENTIM_TARGET_URL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # Opcjonalne — kazda z `config.OPTIONAL_VARS` plus poziom logow,
+          # ktorego `Config` nie czyta (argparsuje `os.environ` sam).
+          # Pusta wartosc = brak zmiennej = wartosc domyslna z `Config`.
+          EVENTIM_USER_AGENT: ${{ vars.EVENTIM_USER_AGENT }}
+          EVENTIM_TIMEOUT: ${{ vars.EVENTIM_TIMEOUT }}
+          EVENTIM_MAX_HOPS: ${{ vars.EVENTIM_MAX_HOPS }}
+          EVENTIM_ERROR_COOLDOWN_HOURS: ${{ vars.EVENTIM_ERROR_COOLDOWN_HOURS }}
+          EVENTIM_LOG_LEVEL: ${{ vars.EVENTIM_LOG_LEVEL }}
+          TELEGRAM_MAX_RETRIES: ${{ vars.TELEGRAM_MAX_RETRIES }}
+          # `EVENTIM_STATE_FILE` jest ustawione wyzej, na poziomie zadania —
+          # cache musi czytac dokladnie ten sam napis co program.
         # Kod wyjscia 1 tu nie jest bledem konfiguracji, tylko sygnałem:
         # "nie udało się sprawdzić" albo "nie udało się wysłać alertu".
         # Zielony run znaczy tylko tyle, że sprawdzenie się wykonało.

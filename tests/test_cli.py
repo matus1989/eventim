@@ -14,7 +14,7 @@ from __future__ import annotations
 import pytest
 import requests
 import responses
-from conftest import SHOP_HTML, TARGET, register_handshake
+from conftest import SHOP_HTML, TARGET, register_handshake, register_telegram_ok
 
 from eventim_watcher.eventim import new_session
 from eventim_watcher.main import EXIT_FAILURE, EXIT_OK, main
@@ -45,10 +45,8 @@ def bez_sieci(tmp_path, html_soldout):
     """Zastępuje siec atrapa handshake i izoluje plik stanu.
 
     Uzywamy **prawdziwej** strony sklepu z fixture'a, a nie syntetycznej:
-    wszystkie 6 terminow jest ``SoldOut``, wiec sprawdzenie konczy sie cichym
-    ``exit 0`` bez proby wysylki do Telegrama. Testy tego pliku dotycza
-    konfiguracji i obslugi bledow, nie tresci alertu - wysylka jest osobno
-    testowana w ``test_main.py``.
+    wszystkie 6 terminow jest ``SoldOut``. Teraz program **zawsze wysyła**
+    wiadomość (także przy braku biletów), więc rejestrujemy atrapę Telegrama.
 
     Sesja jest przekazywana do ``main()`` wprost, wiec test nie musi wiedziec,
     gdzie program szuka sekretow, i nie zapisuje niczego poza ``tmp_path``.
@@ -69,6 +67,7 @@ def bez_sieci(tmp_path, html_soldout):
     responses.mock.assert_all_requests_are_fired = False
     try:
         register_handshake(final=html_soldout)
+        register_telegram_ok()
         yield FileStateStore(tmp_path / "stan.json")
     finally:
         responses.reset()
@@ -146,17 +145,22 @@ def test_testy_nie_wykonuja_zadnego_zapytania_poza_sklepem(bez_sieci):
         for c in responses.calls
         if "eventim-light.com" not in c.request.url
         and "queue-it.net" not in c.request.url
+        and "api.telegram.org" not in c.request.url
     ]
-    assert not obce, f"zapytania poza sklepem i Queue-it: {obce}"
+    assert not obce, f"zapytania poza sklepem, Queue-it i Telegram: {obce}"
 
 
 def test_brak_dostepnych_terminow_nie_wysyla_alertu(bez_sieci, capsys):
-    """Wszystko SoldOut to cisza, nie alert - i `exit 0` mimo braku biletow."""
+    """Wszystko SoldOut — wysyła informację o braku biletów i `exit 0`."""
+    from conftest import register_telegram_ok
+    register_telegram_ok()
+
     kod = uruchom(bez_sieci)
 
     assert kod == EXIT_OK
-    assert "nie wysylam alertu" in capsys.readouterr().err
-    assert not [c for c in responses.calls if "api.telegram.org" in c.request.url]
+    err = capsys.readouterr().err
+    assert "wiadomosc wyslana" in err or "wyslano" in err
+    assert [c for c in responses.calls if "api.telegram.org" in c.request.url]
 
 
 def test_sciezka_stanu_z_wolnego_miejsca_nie_wywraca_programu(
@@ -178,6 +182,7 @@ def test_sciezka_stanu_z_wolnego_miejsca_nie_wywraca_programu(
 
     responses.reset()
     register_handshake(final=html_soldout)
+    register_telegram_ok()
     kod = main([], env=env(), store=store, session=new_session())
 
     assert kod == EXIT_OK

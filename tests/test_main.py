@@ -125,10 +125,13 @@ def sklep_zwraca(stany, *, telegram: bool = True):
 
 
 def test_wszystko_sprzedane_to_cisza_i_kod_zero(sklep, konfiguracja):
-    sklep_zwraca(SZEŚĆ_SPRZEDANYCH, telegram=False)
+    sklep_zwraca(SZEŚĆ_SPRZEDANYCH)
 
     assert uruchom(konfiguracja, sklep) == EXIT_OK
-    assert telegram_sends() == []
+    wyslane = telegram_sends()
+    assert len(wyslane) == 1
+    assert "BRAK DOSTĘPNYCH BILETÓW" in wyslane[0]
+    assert "Wszystkie terminy (6) są obecnie niedostępne" in wyslane[0]
 
 
 def test_dostepny_termin_wywoluje_jeden_alert(sklep, konfiguracja):
@@ -263,6 +266,7 @@ def test_pierwsze_ostrzezenie_po_przerwie_nie_jest_wyciszone(sklep, konfiguracja
     uruchom(konfiguracja, sklep, teraz=T0)
 
     sklep_zwraca(SZEŚĆ_SPRZEDANYCH)
+    register_telegram_ok()
     uruchom(konfiguracja, sklep, teraz=T0 + timedelta(hours=1))
 
     awaria_sieci()
@@ -270,12 +274,13 @@ def test_pierwsze_ostrzezenie_po_przerwie_nie_jest_wyciszone(sklep, konfiguracja
     uruchom(konfiguracja, sklep, teraz=T0 + timedelta(hours=2))
 
     wyslane = telegram_sends()
-    assert len(wyslane) == 2, "ostrzeżenie po powrocie do zdrowia musi być zgłoszone"
-    assert "nie udało się sprawdzić" in wyslane[1]
+    assert len(wyslane) == 3, "ostrzeżenie po powrocie do zdrowia musi być zgłoszone"
+    assert "nie udało się sprawdzić" in wyslane[2]
 
 
 def test_awaria_nie_kasuje_cookies(sklep, konfiguracja):
-    sklep_zwraca(SZEŚĆ_SPRZEDANYCH, telegram=False)
+    sklep_zwraca(SZEŚĆ_SPRZEDANYCH)
+    register_telegram_ok()
     uruchom(konfiguracja, sklep, teraz=T0)
     zapisane = sklep.load()["cookies"]
     assert zapisane, "udany run powinien zapisać cookies"
@@ -373,13 +378,14 @@ def test_nieudana_wysylka_nie_psuje_stanu_po_sukcesie(sklep, konfiguracja):
 
 def test_brak_pola_availability_wywoluje_ostrzezenie_o_anomalii(sklep, konfiguracja):
     sklep_zwraca([None] * 6)
+    register_telegram_ok()
 
     assert uruchom(konfiguracja, sklep) == EXIT_FAILURE
 
     wyslane = telegram_sends()
-    assert len(wyslane) == 1
-    assert "brak danych o dostępności" in wyslane[0]
-    assert "6 z 6" in wyslane[0]
+    assert len(wyslane) == 2  # no tickets + anomaly
+    assert "BRAK DOSTĘPNYCH BILETÓW" in wyslane[0]
+    assert "brak danych o dostępności" in wyslane[1]
 
 
 def test_anomalia_nie_jest_alertem_o_biletach(sklep, konfiguracja):
@@ -393,20 +399,29 @@ def test_anomalia_nie_jest_alertem_o_biletach(sklep, konfiguracja):
 
 def test_anomalia_ma_wlasny_cooldown(sklep, konfiguracja):
     sklep_zwraca([None] * 6)
+    register_telegram_ok()
     uruchom(konfiguracja, sklep, teraz=T0)
+    assert len(telegram_sends()) == 2  # anomaly + no tickets
 
     sklep_zwraca([None] * 6)
+    register_telegram_ok()
     uruchom(konfiguracja, sklep, teraz=T0 + timedelta(hours=1))
 
-    assert len(telegram_sends()) == 1, "powtórka anomalii w cooldownie musi być wyciszona"
+    # Anomalia jest wyciszona przez cooldown, ale wiadomość "brak biletów" idzie
+    assert len(telegram_sends()) == 3, "powtórka anomalii w cooldownie musi być wyciszona"
 
 
 def test_anomalia_wycisza_sie_dopiero_po_cooldownzie(sklep, konfiguracja):
     for godzina in (0, 1, 6):
         sklep_zwraca([None] * 6)
+        register_telegram_ok()
         uruchom(konfiguracja, sklep, teraz=T0 + timedelta(hours=godzina))
 
-    assert len(telegram_sends()) == 2
+    # godzina 0: anomaly + no tickets = 2
+    # godzina 1: no tickets (anomalia wyciszona) = 1
+    # godzina 6: anomaly + no tickets = 2
+    # total = 5
+    assert len(telegram_sends()) == 5
 
 
 def test_anomalia_nie_wycisza_swiezego_ostrzezenia_o_awarii(sklep, konfiguracja):
@@ -422,11 +437,12 @@ def test_anomalia_nie_wycisza_swiezego_ostrzezenia_o_awarii(sklep, konfiguracja)
     assert len(telegram_sends()) == 1
 
     sklep_zwraca([None] * 6)
+    register_telegram_ok()
     uruchom(konfiguracja, sklep, teraz=T0 + timedelta(hours=1))
 
     wyslane = telegram_sends()
-    assert len(wyslane) == 2
-    assert "brak danych o dostępności" in wyslane[1]
+    assert len(wyslane) == 3  # error + (anomaly + no tickets)
+    assert "brak danych o dostępności" in wyslane[2]
 
 
 def test_dostepne_i_nieznane_jednoczesnie_daje_dwa_komunikaty(sklep, konfiguracja):
@@ -538,17 +554,24 @@ def test_pierwsze_uruchomienie_nie_loguje_zmiany_stanu(sklep, konfiguracja, capl
 
 def test_cookies_z_cache_skracaja_handshake_do_jednego_hopu(sklep, konfiguracja):
     """Poprawny cache: 1 hop zamiast 5 — i poprawność niezależna od cache."""
-    sklep_zwraca(SZEŚĆ_SPRZEDANYCH, telegram=False)
+    sklep_zwraca(SZEŚĆ_SPRZEDANYCH)
     uruchom(konfiguracja, sklep, teraz=T0)
 
     # Ciepły cache: sklep od razu odpowiada 200, bez Queue-it.
     register_shop_only(shop_page(SZEŚĆ_SPRZEDANYCH))
 
-    licznik_przed = len(responses.calls)
+    # Licz tylko wywołania do sklepu/Queue-it, nie Telegram
+    licznik_przed = len([
+        c for c in responses.calls
+        if "eventim-light.com" in c.request.url or "queue-it.net" in c.request.url
+    ])
     kod = uruchom(konfiguracja, sklep, teraz=T0 + timedelta(hours=1))
 
     assert kod == EXIT_OK
-    hopow = len(responses.calls) - licznik_przed
+    hopow = len([
+        c for c in responses.calls
+        if "eventim-light.com" in c.request.url or "queue-it.net" in c.request.url
+    ]) - licznik_przed
     assert hopow == 1, f"ciepły cache powinien dać 1 hop, jest {hopow}"
 
 
@@ -556,7 +579,7 @@ def test_poprawnosc_nie_zalezy_od_cache(sklep, konfiguracja):
     """Wygasły cache to normalna sytuacja, nie awaria."""
     sklep.path.unlink(missing_ok=True)
 
-    sklep_zwraca(SZEŚĆ_SPRZEDANYCH, telegram=False)
+    sklep_zwraca(SZEŚĆ_SPRZEDANYCH)
 
     assert uruchom(konfiguracja, sklep) == EXIT_OK
 
@@ -565,7 +588,7 @@ def test_uszkodzony_cache_nie_przeszkadza(sklep, konfiguracja, caplog):
     sklep.path.parent.mkdir(parents=True, exist_ok=True)
     sklep.path.write_text("{uszkodzone", encoding="utf-8")
 
-    sklep_zwraca(SZEŚĆ_SPRZEDANYCH, telegram=False)
+    sklep_zwraca(SZEŚĆ_SPRZEDANYCH)
 
     assert uruchom(konfiguracja, sklep) == EXIT_OK
     assert "uszkodzony JSON" in caplog.text

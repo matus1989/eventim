@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from eventim_watcher.config import OPTIONAL_VARS, REQUIRED_VARS
 
 WORKFLOWS = Path(__file__).resolve().parents[1] / ".github" / "workflows"
 
@@ -30,6 +31,22 @@ KROK_CHECK = "python -m eventim_watcher"
 #: Zmienne, ktore **maja** byc sekretami. Numery sa z definicji
 #: niesprawdzalne - chodzi o to, skad GitHub je czyta.
 SEKRETY = ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")
+
+#: Zmienne przekazywane do `watch.yml` wlasnie przez `vars.*`.
+#:
+#: Lista pochodzi z `config.OPTIONAL_VARS`, wiec nie moze sie rozjechac z
+#: kodem: nowa zmienna opcjonalna w `Config` bez odpowiednika w `watch.yml`
+#: wywala ten test, a nie run za trzy miesiace.
+#:
+#: Dwie zmienne sa obsluzone osobno i celowo nie trafiaja na te liste:
+#:
+#: * `EVENTIM_STATE_FILE` - czytana w `env` **zadania**, bo cache ma wskazywac
+#:   dokladnie ten sam plik co program (patrz `test_sciezka_stanu_idzie_z_vars`).
+#: * `EVENTIM_LOG_LEVEL` - nie ma jej w `OPTIONAL_VARS`, bo `Config` jej nie
+#:   czyta: argparse siega po `os.environ` sam (`main.py`).
+OPCJONALNE_Z_VARS = tuple(
+    name for name in OPTIONAL_VARS if name != "EVENTIM_STATE_FILE"
+) + ("EVENTIM_LOG_LEVEL",)
 
 
 def wczytaj(nazwa: str) -> dict:
@@ -65,8 +82,15 @@ def env_krokow(wf: dict) -> list[dict]:
 
 
 def wszystkie_env(wf: dict) -> dict[str, str]:
-    """Scalone `env` wszystkich kroków — kolejny krok nadpisuje poprzedni."""
+    """Scalone `env` zadania i krokow — krok nadpisuje zadanie.
+
+    Kolejnosc jest wazna: `env` na poziomie zadania jest widoczne we
+    wszystkich krokach, a `env` kroku tylko w tym kroku. Ostatnie wygrana
+    odpowiada temu, co realnie widzi program.
+    """
     wynik: dict[str, str] = {}
+    for zadanie in wf["jobs"].values():
+        wynik.update(zadanie.get("env") or {})
     for krok in env_krokow(wf):
         wynik.update(krok["env"])
     return wynik
@@ -137,16 +161,80 @@ def test_adres_sklepu_idzie_przez_vars(watch: dict) -> None:
     assert wszystkie_env(watch)["EVENTIM_TARGET_URL"] == "${{ vars.EVENTIM_TARGET_URL }}"
 
 
-def test_zaden_krok_nie_zawiera_literalu_w_looku_sekretu(watch: dict) -> None:
-    """Nawet `vars` zapisane na sztywno to wyciek w pliku, który czytają
-    wszyscy z dostępem do repozytorium, także forkujący."""
-    for krok in env_krokow(watch):
-        for nazwa, wartosc in krok["env"].items():
-            if nazwa in SEKRETY:
-                continue
-            assert wartosc == "" or wartosc.startswith("${{"), (
-                f"{nazwa} = {wartosc!r} - literał zamiast odwołania"
-            )
+@pytest.mark.parametrize("nazwa", REQUIRED_VARS)
+def test_wymagana_zmienna_dosiega_programu(watch: dict, nazwa: str) -> None:
+    """Komplet wymaganych zmiennych musi trafic do `env`.
+
+    Brak sekretu konczy sie czytelnym `ConfigError` i kodem 1 na **kazdym**
+    godzinnym runie, az do konfiguacji - czyli cichy monitoring, ktory wyglada
+    na zdrowy. Lista z `config.REQUIRED_VARS`, nie zgloszona recznie.
+    """
+    assert nazwa in wszystkie_env(watch), f"{nazwa} nie dociera do programu w watch.yml"
+
+
+@pytest.mark.parametrize("nazwa", OPCJONALNE_Z_VARS)
+def test_opcjonalna_zmienna_idzie_przez_vars(watch: dict, nazwa: str) -> None:
+    """Zmienna ustawiona w repo, a nieczytana w `watch.yml`, jest martwa.
+
+    Nie jest to brak komfortu, tylko cicha awaria: dokumentacja obiecuje, ze
+    `EVENTIM_TIMEOUT` cos robi, uzytkownik ustawiaja 90, a program ciagle
+    uzywa 30 - i wszystko wyglada na zdrowe. Kontrakt jest jednolinijkowy:
+    kazda opcjonalna zmienna z `Config` musi trafic do `env` przez `vars.*`.
+    """
+    env = wszystkie_env(watch)
+    assert nazwa in env, f"{nazwa} nie jest przekazana do zadania w watch.yml"
+    assert env[nazwa] == f"${{{{ vars.{nazwa} }}}}", (
+        f"{nazwa} czytana z {env[nazwa]!r} - wariant vars zamiast secrets "
+        f"albo wpisana na sztywno"
+    )
+
+
+def test_sciezka_stanu_idzie_z_vars_i_cache_za_nia_idzie(watch: dict) -> None:
+    """Cache musi pokazywac **ten sam** plik co program.
+
+    Dwie mozliwosci i obie zle: cache wpisana na sztywno na `.cache` omija
+    wlasny `EVENTIM_STATE_FILE` (kazde sprawdzenie wraca do pieciohopowego
+    handshake'u bez powodu), a cache bez `restore-keys` zostawia pierwszy run
+    repo zimny na zawsze.
+    """
+    wartosc = wszystkie_env(watch)["EVENTIM_STATE_FILE"]
+    assert "vars.EVENTIM_STATE_FILE" in wartosc, wartosc
+    assert ".cache/eventim-state.json" in wartosc, (
+        "brak wartosci domyslnej - niezdefiniowana zmienna dalaby pusty `path`"
+    )
+
+    cache = next(s for s in kroki(watch) if "actions/cache" in str(s.get("uses", "")))
+    assert cache["with"]["path"] == "${{ env.EVENTIM_STATE_FILE }}"
+
+
+def test_zadna_niesekret_nie_idzie_z_secrets(watch: dict) -> None:
+    """Odwrotnosc testu sekretow: kopiuj-wklej `secrets.` w zla nazwe.
+
+    `secrets.*` dziala dla kazdej nazwy, wiec blad wyglada normalnie - tylko
+    zmienna trafia na liste sekretow, a uzytkownik widzi "nie ustawilem sekretu".
+    """
+    for nazwa, wartosc in wszystkie_env(watch).items():
+        if nazwa in SEKRETY:
+            continue
+        assert "secrets." not in str(wartosc), f"{nazwa} czytana z secrets.*"
+
+
+def test_zaden_plik_nie_daje_wartosci_na_sztywno(watch: dict) -> None:
+    """Kazda zmienna musi pochodzic z repozytorium, nie z pliku workflow.
+
+    Nawet `vars` zapisane na sztywno to wyciek w pliku, ktory czytaja wszyscy
+    z dostepem do repozytorium, takze forkujacy - a `vars.*` nie maskuje
+    wartosci, wiec GitHub wypisze ja w logu przy kazdym uruchomieniu.
+
+    Jedyny dopuszczony literał to domyślna ścieżka pliku stanu w wyrażeniu
+    `vars.EVENTIM_STATE_FILE || '.cache/...'`: nie jest poufna, a cache musi
+    wskazywać dokładnie ten sam napis co program.
+    """
+    for nazwa, wartosc in wszystkie_env(watch).items():
+        if nazwa == "EVENTIM_STATE_FILE":
+            assert str(wartosc).startswith("${{") and ".cache/eventim-state.json" in wartosc
+            continue
+        assert str(wartosc).startswith("${{"), f"{nazwa} = {wartosc!r} - literał zamiast odwołania"
 
 
 def test_watch_odpala_wlasciwe_check(watch: dict) -> None:
@@ -178,7 +266,10 @@ def test_cache_stanu_ma_klucz_unikalny_na_przebieg(watch: dict) -> None:
     cache = next(s for s in kroki(watch) if "actions/cache" in str(s.get("uses", "")))
     assert "${{ github.run_id }}" in cache["with"]["key"]
     assert cache["with"]["restore-keys"], "bez restore-keys pierwszy run zawsze zimny"
-    assert cache["with"]["path"] == ".cache"
+    # Sama ścieżka cache nie jest tu pilnowana — robi to
+    # `test_sciezka_stanu_idzie_z_vars_i_cache_za_nia_idzie`, który wie
+    # również, jaką wartość przyjmuje wyrażenie `||` dla niezdefiniowanej
+    # zmiennej.
 
 
 # --- probe.yml: diagnostyka -----------------------------------------------

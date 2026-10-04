@@ -299,10 +299,11 @@ def test_pusta_sciezka_jest_ignorowana() -> None:
 
 def test_raport_bez_biletow(sklep, konfiguracja) -> None:
     register_handshake(final=shop_page(WSZYSTKIE_SPRZEDANE))
+    register_telegram_ok()
     kod, raport = uruchom(konfiguracja, sklep)
     assert kod == EXIT_OK
     assert raport.wynik == WYNIK_BRAK
-    assert raport.wysylka == WYSYLKA_BRAK
+    assert raport.wysylka == WYSYLKA_WYSLANA
     assert raport.terminow == 6
     assert raport.dostepnych == 0
     assert raport.nieznanych == 0
@@ -375,6 +376,7 @@ def test_raport_anomalii_ma_liczby_terminow(sklep, konfiguracja) -> None:
 def test_raport_nie_jest_wymagany(sklep, konfiguracja) -> None:
     """`raport` jest opcjonalny — stare wywolania bez niego muszą działać."""
     register_handshake(final=shop_page(WSZYSTKIE_SPRZEDANE))
+    register_telegram_ok()
     assert run(konfiguracja, sklep, new_session(), now=T0) == EXIT_OK
 
 
@@ -383,6 +385,7 @@ def test_raport_nie_jest_wymagany(sklep, konfiguracja) -> None:
 
 def test_cli_zapisuje_podsumowanie(sklep, tmp_path: Path) -> None:
     register_handshake(final=shop_page(WSZYSTKIE_SPRZEDANE))
+    register_telegram_ok()
     plik = tmp_path / "summary.md"
     kod = main(
         [],
