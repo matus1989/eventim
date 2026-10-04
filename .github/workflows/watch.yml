@@ -1,4 +1,4 @@
-# CODZIENNY monitoring: sprawdza dostepnosc biletow raz na godzine.
+# CODZIENNY monitoring: sprawdza dostepnosc biletow co 10 minut.
 #
 # To jest wlasciwy monitoring. `probe.yml` jest diagnostyka - odpala sie
 # recznie i nic nie wysyla. Kazdy push wywolujacy `probe.yml` bylby mierzony
@@ -32,9 +32,9 @@
 # GitHub podstawia `""`, a `Config.from_env()` traktuje `""` jako brak i bierze
 # wartosc domyslna. Ten sam zapis obsluguje "nie ustawiono" i "wyczyszczono".
 #
-# `pytest -m "not live"` przed wlasciwym krokiem kosztuje ok. 25 s na godzine
-# (ok. 300 min/mies. z limitu ~2000). Jest celowe: zielony run mowi, ze
-# checkout i instalacja sa sprawne, wiec godzinowy check ma sensowny kod
+# `pytest -m "not live"` przed wlasciwym krokiem kosztuje ok. 25 s co 10 min
+# (ok. 150 min/mies. z limitu ~2000). Jest celowe: zielony run mowi, ze
+# checkout i instalacja sa sprawne, wiec codzienny check ma sensowny kod
 # bazowy. Gdyby to przeszkadzalo w limicie crona - przeniesc do `ci.yml`
 # na `push`, bo testy sprawdzaja nasz kod, a ten zmienia sie tylko przy
 # zmianach w repozytorium.
@@ -43,10 +43,10 @@ name: Watch tickets
 
 on:
   schedule:
-    # 17 min po pelnej godzinie, nie "0 * * * *". Uruchomienia w szczycie
-    # minuty koncentruja sie na GitHub i bywaja opoznione o kilkanaście minut.
-    # Cena: 17 min po pelnej godzinie.
-    - cron: "17 * * * *"
+    # Co 10 minut, nie "0 * * * *" ani "17 * * * *".
+    # `*/10` rozklada obciazenie na GitHub Actions (brak szczytu o pełnej godzinie).
+    # Cena: nieco wiecej runów, ale szybsza reakcja na dostepne bilety.
+    - cron: "*/10 * * * *"
   workflow_dispatch:
 
 permissions:

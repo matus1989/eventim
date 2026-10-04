@@ -104,8 +104,8 @@ def watch() -> dict:
     return wczytaj("watch.yml")
 
 
-def test_watch_odpala_sie_co_godzine(watch: dict) -> None:
-    assert watch["on"]["schedule"] == [{"cron": "17 * * * *"}]
+def test_watch_odpala_sie_co_10_minut(watch: dict) -> None:
+    assert watch["on"]["schedule"] == [{"cron": "*/10 * * * *"}]
 
 
 def test_watch_da_sie_odpalic_recznie(watch: dict) -> None:
