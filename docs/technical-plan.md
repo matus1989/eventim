@@ -375,11 +375,31 @@ Ceny: `40–58 EUR`; przy `low == high` tylko jedna liczba; przy braku → `cena
 
 ### Kryteria akceptacji
 
-- [ ] Snapshoty PL dla obu komunikatów (dostępność i awaria).
-- [ ] Test na atrapach: poprawne URL, `chat_id`, `text`, `disable_web_page_preview`.
-- [ ] Test: brak `parse_mode` w żądaniu.
-- [ ] Test: `400`/`429`/`500` od API → `NotifyError`, nie wyjątek surowy.
-- [ ] Test podziału: 200 terminów → tyle wiadomości, ile potrzeba.
+- [x] Snapshoty PL dla obu komunikatów (dostępność i awaria) — `tests/test_messages.py`
+- [x] Test na atrapach: poprawne URL, `chat_id`, `text`, `disable_web_page_preview`
+- [x] Test: brak `parse_mode` w żądaniu (ani w pozostałych polach)
+- [x] Test: `400`/`429`/`500` od API → `NotifyError`, nie wyjątek surowy
+- [x] Test podziału: 240 terminów → tyle wiadomości, ile potrzeba
+
+### Uzupełnione w trakcie implementacji
+
+Cztery pułapki z tabeli wyżej okazały się istotne w praktyce, więc dostały
+własne testy:
+
+| Pułapka | Test |
+|---|---|
+| Token w logu / wyjątku | `test_komunikat_bledu_nie_zawiera_tokenu`, `test_komunikat_bledu_nie_wkleja_cala_odpowiedzi` — Telegram echouje token w błędach, więc opis budujemy z `description`, nigdy z całego ciała |
+| Ucięcie URL | `test_podzial_nie_lamie_url` — dzielimy po liniach; pojedyncza linia za długa idzie w całości |
+| `%a` zależny od lokalizacji | `test_dzien_tygodnia_nie_zalezy_od_lokalizacji_procesu` — skróty dni policzone ręcznie |
+| Znaki markdown w nazwie | `test_alert_nie_escapuje_znacznikow_markdown` — bez `parse_mode` treść jest dosłowna, więc escapowanie **zmieniłoby** komunikat |
+
+Dodatkowo: `400` (zły token, nieistniejący czat, za długi tekst) **nie jest
+ponawiane** — to błąd konfiguracji, nie chwilowa awaria. Ponawiamy tylko `429`
+i `5xx` oraz wyjątki sieciowe, maksymalnie raz.
+
+**Trzeci komunikat** — `format_unknown_availability` dla ADR-9 (brak pola
+`availability`). Bez niego anomalia markupu byłaby cicha: brak alertu wyglądałby
+jak zwykłe „wyprzedane".
 
 ---
 

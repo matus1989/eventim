@@ -181,6 +181,31 @@ na Telegramie widać poprawny komunikat.
 
 **Zależności:** Faza 3 (formatowanie używa modelu `Term`).
 
+**Stan (po implementacji):**
+
+- Zrealizowana — `messages.py` + `telegram.py`, 82 testy
+  (`tests/test_messages.py`, `tests/test_telegram.py`).
+- Doszło trzeciego komunikatu: `format_unknown_availability(series)` — ostrzeżenie
+  o anomalii `UNKNOWN` (ADR-9). Bez niego brak danych byłby cichy i wyglądałby
+  jak zwykłe `wyprzedane`.
+- Odstępstwo: zamiast `raise_for_status()` budujemy opis z pola `description`.
+  Telegram echuje token w błędach, a `raise_for_status()` dokładałby do wyjątku
+  adres URL z tokenem w ścieżce.
+- Odstępstwo: `400` nie jest ponawiane — zły token, nieistniejący czat i za długi
+  tekst nie ustąpią przed próbą. Ponawiamy `429`, `5xx` i wyjątki sieciowe, maks. raz.
+- Podział na części dzieli po **liniach**, nie po znakach: ucięcie w połowie URL-a
+  daje link, którego nie da się kliknąć. Pojedyncza linia za długa idzie w całości.
+
+Pułapki z listy powyżej potwierdziły się w praktyce — każda dostała własny test:
+
+| Pułapka | Test |
+|---|---|
+| token w logu lub wyjątku | `test_komunikat_bledu_nie_zawiera_tokenu`, `test_komunikat_bledu_nie_wkleja_cala_odpowiedzi` |
+| ucięcie URL-a | `test_podzial_nie_lamie_url` |
+| `%a` zależny od lokalizacji | `test_dzien_tygodnia_nie_zalezy_od_lokalizacji_procesu` |
+| znaki markdown w nazwie | `test_alert_nie_escapuje_znacznikow_markdown` |
+| `400` bez sensu ponawiania | `test_tekst_za_dlugi_nie_powoduje_wyslania_od_nowa` |
+
 ---
 
 ## Faza 5 — Orkiestracja, awarie, cooldown
