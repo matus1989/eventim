@@ -1,0 +1,110 @@
+# Faza 0 - BRAMKA: czy runner pobiera strone sklepu?
+#
+# Workflow tymczasowy, kasowany po rozstrzygnięciu Fazy 0 (roadmap.md).
+# Odpowiada na jedno pytanie: czy adres IP hostowanego runnera jest
+# przyjmowany przez Akamai i Queue-it. Nie da się tego rozstrzygnąć
+# na maszynie lokalnej - inny adres IP, inne warunki sieciowe.
+#
+# Bez sekretów. Celowo: bramka nie może zależeć od konfiguracji Telegrama,
+# bo wtedy nie odróżniamy "nie da się pobrać strony" od "nie ma tokenu".
+#
+# Metryka sukcesu (roadmap.md, Faza 0): hops == 5 ORAZ znaleziony wezel
+# EventSeries z terminami.
+#
+# Uruchomienie:
+#   - automatycznie po pushu na main (paths ponizej) - dzieje sie przy
+#     dodaniu tego pliku, wiec nie trzeba nic klikać na początku,
+#   - recznie: Actions -> Faza 0 -> Run workflow.
+#
+# Wynik: podsumowanie na gorze strony runa + artefakt z pobrana strona.
+# Kod wyjscia 2 = bramka nie przeszla; artykul planu awaryjnego: plan
+# techniczny, sekcja 11.1.
+
+name: Faza 0 - bramka pobierania
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/probe.yml
+      - scripts/probe.py
+      - src/eventim_watcher/**
+      - tests/**
+      - pyproject.toml
+
+# Bez sekretow, wiec tylko odczyt repozytorium - najmniejsze uprawnienia,
+# jakie dzialaja.
+permissions:
+  contents: read
+
+# Kolejne uruchomienia nie powinny sie nakladac: proba strzela do sklepu
+# i dwa rownolegle handshake'i tylko zwiekszaja ryzyko wyzwania Queue-it.
+concurrency:
+  group: faza0-bramka
+  cancel-in-progress: false
+
+jobs:
+  bramka:
+    name: Pobierz strone sklepu
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Pobierz kod
+        uses: actions/checkout@v4
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instaluj zaleznosci
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Testy jednostkowe (bez sieci)
+        # Kolejnosc jest istotna: nie uruchamiamy probe'a na runnerze,
+        # na ktorym testy nie przechodza. Czyli najpierw tani test
+        # lokalny, potem jedno zapytanie do sklepu.
+        run: python -m pytest -q -m "not live"
+
+      - name: Srodowisko runnera
+        # Wypisujemy wersje i architekture ręcznie: przy bledzie w probe'ie
+        # to jedyne dane, ktore zostaja w logu.
+        run: |
+          echo "runner:  $RUNNER_OS / $RUNNER_ARCH"
+          echo "python:  $(python -VV)"
+          echo "data:    $(date -u +%FT%TZ)"
+
+      - name: Proba pobrania (Faza 0)
+        id: probe
+        # continue-on-error: pozwala dojsc do kroku artefaktow, zeby
+        # odpowiedz (strona marketingowa albo zmieniony JSON-LD) byla
+        # do ogladania. Bramka i tak ostatecznie oblezy ten krok nizej.
+        continue-on-error: true
+        env:
+          # vars, nie secrets: URL sklepu nie jest sekretem, a jego zmiana
+          # nie powinna wymagac rotacji sekretow (ryzyko R10).
+          EVENTIM_TARGET_URL: ${{ vars.EVENTIM_TARGET_URL }}
+        run: |
+          python scripts/probe.py --pauza 8
+
+      - name: Artefakty proby
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: faza0-proba-${{ github.run_number }}
+          path: probe-artifacts/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Werdykt
+        # Ten krok decyduje o kolorze runa. Dopiero tu proba moze
+        # "obliczyc" - inaczej czerwony run nie wskazywalby, czy zadzialal
+        # skrypt, czy nie przeszla bramka.
+        if: steps.probe.outcome == 'failure'
+        run: |
+          echo "::error::Faza 0: bramka NIE przeszla. Patrz podsumowanie runa i plan awaryjny (technical-plan.md 11.1)."
+          exit 1

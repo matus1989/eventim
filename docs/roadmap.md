@@ -12,15 +12,18 @@
 
 ## Status
 
-Wszystkie fazy niezrealizowane — dokument jest planem, nie opisem stanu faktycznego.
+Fazy 0–4 mają kod i testy. Faza 0 jest **bramką: kod jest gotowy, wynik z
+prawdziwego runnera jeszcze nie.** Dopóki go nie ma, żadna z faz nie jest
+„gotowa do wdrożenia” — Faza 7 uruchamia dokładnie to samo pobieranie co
+proba, tylko z orkiestracją i sekretami.
 
-| Faza | Nazwa | Priorytet |
+| Faza | Nazwa | Stan |
 |---|---|---|
-| 0 | Walidacja na runnerze GitHub Actions | ⛔ **bramka** — cały projekt zależy od niej |
-| 2 | Klient Eventim + handshake Queue-it | ⛔ **krytyczna** — najtrudniejszy element, buduje Fazę 0 |
-| 1 | Szkielet projektu i konfiguracja | 🔲 |
-| 3 | Parser JSON-LD i model dostępności | 🔲 |
-| 4 | Notyfikacja Telegram | 🔲 |
+| 0 | Walidacja na runnerze GitHub Actions | 🚧 **bramka** — koder gotowy, wynik z runnera czeka |
+| 1 | Szkielet projektu i konfiguracja | ✅ |
+| 2 | Klient Eventim + handshake Queue-it | ✅ |
+| 3 | Parser JSON-LD i model dostępności | ✅ |
+| 4 | Notyfikacja Telegram | ✅ kod + testy, **nie sprawdzone na Telegramie** |
 | 5 | Orkiestracja, awarie, cooldown | 🔲 |
 | 6 | Testy i walidacja end-to-end | 🔲 |
 | 7 | Workflow i dokumentacja | 🔲 |
@@ -60,6 +63,39 @@ potrzebny do Fazy 0, więc nie ma sensu pisać go dwa razy.
 
 **Zależności:** brak.
 **Kryterium zakończenia:** znany wynik z API runnera, udokumentowany w repo.
+
+**Stan (po implementacji):**
+
+- Koder i workflow gotowe: `scripts/probe.py` + `.github/workflows/probe.yml`.
+- 40 testów (`tests/test_probe.py`) pokrywa **wszystkie werdykty**, nie tylko
+  ścieżkę sukcesu — błąd w skrypcie proby dawałby fałszywy werdykt, a to
+  gorsze niż brak odpowiedzi.
+- Wynik z prawdziwego runnera: **nie zebrano**. Bramka wciąż otwarta.
+
+**Odstępstwa od pierwotnego zakresu, świadome:**
+
+- Workflow uruchamia się też na `push` do `main` (dla ścieżek proby), więc sam
+  commit dodający `probe.yml` odpala bramkę. Bez tego trzeba byłoby pamiętać
+  o kliknięciu w UI.
+- Logika jest w skrypcie, nie w YAML. YAML ma ~30 linii i tylko orkiestruje.
+- `continue-on-error` przy probie + osobny krok „Werdykt”. Dzięki temu artefakt
+  z odpowiedzią sklepu powstaje **także przy niepowodzeniu** — bez niego nie
+  da się zdiagnozować, co faktycznie przyszło z hosta.
+- Matryca User-Agentów (4 warianty, tylko hop 1) uruchamia się **wyłącznie po
+  porażce**. Przy sukcesie dodatkowe zapytania tylko ryzykowałyby wyzwanie
+  Queue-it. Jej wynik rozdziela trzy sytuacje wyglądające identycznie
+  („nie działa”), ale z różnymi naprawami: winny UA, winny adres IP, albo biała
+  lista UA inna na runnerze niż na maszynie lokalnej (unieważniłaby ADR-2).
+- Sześć werdyktów zamiast tak/nie. Osobne `SZKICZ_BEZ_TERMINOW` (strona się
+  wczytała, ale `subEvent` pusty) i `JSON_LD_NIEPARSOWALNE`, bo „nie da się
+  pobrać” i „nie da się zrozumieć” to dwa różne problemy (ryzyko R1 vs R2).
+
+**Kody wyjścia:** `0` — bramka przeszła, `2` — nie przeszła. Inne niż `1`
+świadomie: `1` w tym repo oznacza błąd programu, a `2` jest wynikiem testu.
+
+**Do odczytania z runa:** podsumowanie na górze strony runa (nie przewijany
+log) oraz artefakt `faza0-proba-<numer>` z pobraną stroną, `probe-report.json`
+i `probe-report.txt`.
 
 ---
 

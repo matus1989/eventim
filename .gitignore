@@ -21,3 +21,6 @@ htmlcov/
 .cache/
 state/
 *.cookiejar
+
+# Artefakty proby z Fazy 0 (odpowiedzi sklepu, ~150 kB na run)
+probe-artifacts/

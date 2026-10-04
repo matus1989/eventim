@@ -221,6 +221,42 @@ znaczniku i **nie** podchodzimy do `FetchError` — zgłaszamy
 
 ---
 
+## 3a. Proba Fazy 0 (`scripts/probe.py`)
+
+### Kontrakt
+
+```python
+python scripts/probe.py --url URL --pauza 8   # kod wyjscia: 0 przeszla, 2 nie
+```
+
+Skrypt wypisuje linie `WERDYKT=<kod>`, `bramka=TAK/NIE`, `hops=N` i zapisuje
+`probe-report.json` + `probe-report.txt` w `probe-artifacts/`.
+
+### Werdykty
+
+| Kod | Znaczenie | Co robić |
+|---|---|---|
+| `OK` | sklep pobrany, 6 terminów | Faza 0 ✓ |
+| `SZKICZ_BEZ_TERMINOW` | sklep pobrany, `subEvent` pusty | bramka ✓, poprawić parser (R2) |
+| `BLOKADA_IP_STRONA_MARKETINGOWA` | handshake na stronie promocyjnej | plan awaryjny 11.1 |
+| `BLOKADA_AKAMAI_403` | 403 na pierwszym hopie | sprawdzić matrycę UA |
+| `HANDSHAKE_NIEUKONCZONY` | pętla przekierowań nie domknęła się | R3 |
+| `JSON_LD_NIEPARSOWALNE` | strona się wczytała, dane nieczytelne | R2 |
+| `BLAD_SIECI` | brak łączności/DNS | infrastruktura runnera |
+
+### Kryteria akceptacji
+
+- [x] Wszystkie werdykty mają testy — błąd proby daje fałszywy werdykt,
+      a to gorsze niż brak odpowiedzi
+- [x] Sukces **nie** odpala dodatkowych zapytań do sklepu
+- [x] Odpowiedź zapisana jako artefakt także przy niepowodzeniu
+- [x] Podsumowanie na górze strony runa (`GITHUB_STEP_SUMMARY`)
+- [x] Osobne kody wyjścia dla wyniku testu i dla awarii programu
+- [x] Test chroni `github.com` w User-Agentzie przed podmianą na e-mail
+- [ ] Wynik z prawdziwego runnera udokumentowany w repo (bramka)
+
+---
+
 ## 4. Parser JSON-LD i model dostępności
 
 ### Kontrakt
