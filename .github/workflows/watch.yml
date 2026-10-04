@@ -43,10 +43,7 @@ name: Watch tickets
 
 on:
   schedule:
-    # Co 10 minut, nie "0 * * * *" ani "17 * * * *".
-    # `*/10` rozklada obciazenie na GitHub Actions (brak szczytu o pełnej godzinie).
-    # Cena: nieco wiecej runów, ale szybsza reakcja na dostepne bilety.
-    - cron: "*/10 * * * *"
+    - cron: "*/30 * * * *"
   workflow_dispatch:
 
 permissions:
