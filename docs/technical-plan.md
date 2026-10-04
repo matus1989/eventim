@@ -40,14 +40,17 @@ eventim/
 └── .github/
     └── workflows/
         ├── watch.yml              # cron + workflow_dispatch
-        └── probe.yml              # tymczasowy, Faza 0
+        └── probe.yml              # diagnostyka, tylko workflow_dispatch
 ```
 
 **Decyzje:**
 - Layout `src/` — wymusza instalację pakietu, więc importy nie działają „przypadkiem” z katalogu.
 - `tests/fixtures/` z **prawdziwym** HTML, nie wymyślonym — atrapy potrafią być
   zbyt uprzejme wobec prawdziwego formatu.
-- `probe.yml` tymczasowy — usuwany po rozstrzygnięciu Fazy 0.
+- `probe.yml` **zostaje** jako narzędzie diagnostyczne wywoływane ręcznie
+  (`workflow_dispatch`), mimo że pierwotnie był oznaczony jako tymczasowy do
+  usunięcia po Fazie 0. Powód: jest jedynym sposobem rozróżnienia trzech awarii,
+  które wszystkie wyglądają jak „brak alertów" (ADR-2, R2, R1).
 
 ---
 

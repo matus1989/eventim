@@ -1,37 +1,39 @@
-# Faza 0 - BRAMKA: czy runner pobiera strone sklepu?
+# DIAGNOSTYKA: czy runner pobiera strone sklepu?
 #
-# Workflow tymczasowy, kasowany po rozstrzygnięciu Fazy 0 (roadmap.md).
-# Odpowiada na jedno pytanie: czy adres IP hostowanego runnera jest
-# przyjmowany przez Akamai i Queue-it. Nie da się tego rozstrzygnąć
-# na maszynie lokalnej - inny adres IP, inne warunki sieciowe.
+# Powstal jako bramka Fazy 0 i rozwiazal wtedy jedno pytanie: czy adres IP
+# hostowanego runnera jest przyjmowany przez Akamai i Queue-it. Nie da sie
+# tego rozstrzygnac na maszynie lokalnej - inny adres IP, inne warunki
+# sieciowe. Bramka przeszla 2/2 (runy 37183741624 i 37184256979, dwa
+# rozne adresy AS8075), wiec pytanie ma odpowiedz.
 #
-# Bez sekretów. Celowo: bramka nie może zależeć od konfiguracji Telegrama,
-# bo wtedy nie odróżniamy "nie da się pobrać strony" od "nie ma tokenu".
+# Zostawiony na wypadek, gdyby monitoring kiedys przestal pobierac strone.
+# To jedyna rzecz w repo, ktora potrafi rozroznic:
+#   - Akamai usunelo wpis w bialej liscie User-Agentow (ADR-2, R3),
+#   - zmienila sie struktura JSON-LD i parser przestal widziec terminy (R2),
+#   - adres runnera trafil do zablokowanego zakresu (R1, architektura 2.5).
+# Bez tego narzedzia taki stan wygladalby tylko jak cisza na Telegramie.
+#
+# Celowo TYLKO workflow_dispatch - nie odpala sie po pushu. Kazdy push
+# odwalal 26 s CI, a blama push-triggered niczego nie mowi, czego nie
+# powiedzialby watch.yml z Fazy 7.
+#
+# Bez sekretow. Celowo: diagnostyka nie moze zaleziec od konfiguracji
+# Telegrama, bo wtedy nie odroznimy "nie da sie pobrac strony" od
+# "nie ma tokenu".
 #
 # Metryka sukcesu (roadmap.md, Faza 0): hops == 5 ORAZ znaleziony wezel
 # EventSeries z terminami.
 #
-# Uruchomienie:
-#   - automatycznie po pushu na main (paths ponizej) - dzieje sie przy
-#     dodaniu tego pliku, wiec nie trzeba nic klikać na początku,
-#   - recznie: Actions -> Faza 0 -> Run workflow.
+# Uruchomienie: Actions -> ta diagnostyka -> Run workflow.
 #
 # Wynik: podsumowanie na gorze strony runa + artefakt z pobrana strona.
-# Kod wyjscia 2 = bramka nie przeszla; artykul planu awaryjnego: plan
+# Kod wyjscia 2 = bramka nie przeszla; artykul planu awaryjny: plan
 # techniczny, sekcja 11.1.
 
-name: Faza 0 - bramka pobierania
+name: Diagnostyka pobierania strony
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - .github/workflows/probe.yml
-      - scripts/probe.py
-      - src/eventim_watcher/**
-      - tests/**
-      - pyproject.toml
 
 # Bez sekretow, wiec tylko odczyt repozytorium - najmniejsze uprawnienia,
 # jakie dzialaja.
@@ -41,7 +43,7 @@ permissions:
 # Kolejne uruchomienia nie powinny sie nakladac: proba strzela do sklepu
 # i dwa rownolegle handshake'i tylko zwiekszaja ryzyko wyzwania Queue-it.
 concurrency:
-  group: faza0-bramka
+  group: diagnostyka-pobierania
   cancel-in-progress: false
 
 jobs:
@@ -65,24 +67,24 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Testy jednostkowe (bez sieci)
-        # Kolejnosc jest istotna: nie uruchamiamy probe'a na runnerze,
+        # Kolejnosc jest istotna: nie uruchamiamy proby na runnerze,
         # na ktorym testy nie przechodza. Czyli najpierw tani test
         # lokalny, potem jedno zapytanie do sklepu.
         run: python -m pytest -q -m "not live"
 
       - name: Srodowisko runnera
-        # Wypisujemy wersje i architekture ręcznie: przy bledzie w probe'ie
+        # Wypisujemy wersje i architekture recznie: przy bledzie w probie
         # to jedyne dane, ktore zostaja w logu.
         run: |
           echo "runner:  $RUNNER_OS / $RUNNER_ARCH"
           echo "python:  $(python -VV)"
           echo "data:    $(date -u +%FT%TZ)"
 
-      - name: Proba pobrania (Faza 0)
+      - name: Proba pobrania
         id: probe
         # continue-on-error: pozwala dojsc do kroku artefaktow, zeby
         # odpowiedz (strona marketingowa albo zmieniony JSON-LD) byla
-        # do ogladania. Bramka i tak ostatecznie oblezy ten krok nizej.
+        # do ogladania. Koniec pipeline'u oblezy ten krok nizej.
         continue-on-error: true
         env:
           # vars, nie secrets: URL sklepu nie jest sekretem, a jego zmiana
@@ -95,16 +97,16 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: faza0-proba-${{ github.run_number }}
+          name: diagnostyka-${{ github.run_number }}
           path: probe-artifacts/
           if-no-files-found: warn
           retention-days: 30
 
       - name: Werdykt
-        # Ten krok decyduje o kolorze runa. Dopiero tu proba moze
+        # Ten krok decyduje o kolorze runa. Dopiero tutaj proba moze
         # "obliczyc" - inaczej czerwony run nie wskazywalby, czy zadzialal
         # skrypt, czy nie przeszla bramka.
         if: steps.probe.outcome == 'failure'
         run: |
-          echo "::error::Faza 0: bramka NIE przeszla. Patrz podsumowanie runa i plan awaryjny (technical-plan.md 11.1)."
+          echo "::error::Pobieranie nieudane. Wspolczesny monitoring na pewno tez nie pobiera strony - patrz podsumowanie runa i plan awaryjny (technical-plan.md 11.1)."
           exit 1

@@ -110,7 +110,27 @@ Konsekwencje:
   zarchiwizować: R1 jest realnym ryzykiem dla *innych* adresów IP, więc kod
   (`BlockedByIpError` + detektor strony marketingowej) zostaje — tylko jako
   diagnoza, nie jako ścieżka awaryjna projektu.
-- `probe.yml` można usunąć. Ale **nie musi** — patrz pytanie o formę.
+- **`probe.yml` zostaje, ale zmienia rolę** — patrz „Dalszy los diagnostyki” niżej.
+
+**Dalszy los diagnostyki — decyzja właściciela: zostaje, tylko na `workflow_dispatch`.**
+
+Usunięcie workflowu było pierwotnym planem („tymczasowy, kasowany po Fazie 0").
+Odrzucone, bo kasowanie usuwa **jedyny** mechanizm w repo, który potrafi odróżnić
+te trzy awarie — wszystkie wyglądają identycznie jako „cisza na Telegramie":
+
+| Awaria | Objaw dla użytkownika |
+|---|---|
+| Akamai usunęło wpis w białej liście User-Agentów (ADR-2, R3) | brak alertów |
+| Zmienił się JSON-LD, parser przestał widzieć terminy (R2) | brak alertów |
+| Adres runnera w zablokowanym zakresie (R1) | brak alertów |
+
+`watch.yml` z Fazy 7 powie *że* coś się zepsuło. `probe.yml` powie *co*.
+
+Trigger `push` usunięty — 26 s CI na każdy push niczego nie dokładało, a `watch.yml`
+i tak zgłosi awarię wcześniej i częściej. Workflow nadal bez sekretów, więc nie da się
+go pomylić z brakiem konfiguracji Telegrama. Nazwa zmieniona z „Faza 0 - bramka
+pobierania" na „Diagnostyka pobierania strony", bo Faza 0 jest zamknięta i nazwa
+kłamałaby.
 
 **Weryfikacja fixture'a:** JSON-LD pobrany na runnerze jest **bajt w bajt
 identyczny** z `tests/fixtures/shop_soldout.html`. Parser został zwalidowany
