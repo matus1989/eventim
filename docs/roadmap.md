@@ -83,6 +83,12 @@ JSON-LD:  U-Bahn-Cabriotour 2026, 6 terminow, SoldOut:6, nieznanych: 0
 WERDYKT=OK   hops=5   czas=3.7 s
 ```
 
+**Potwierdzenie niezależne:** run `37184256979` (4.10.2026, po naprawie opisu runnera)
+wyszedł z **innym adresem wychodzącym** — `172.208.126.101`, ten sam AS8075 — i
+tez `WERDYKT=OK`, `hops=5`, `SoldOut:6`. To ważniejsze od pierwszego runu: jeden
+działający adres mógłby być szczęśliwym trafieniem w obrębie zablokowanego zakresu,
+dwa różne adresy z tego samego zakresu **są** dowodem, że blokada go nie obejmuje.
+
 **Najważniejszy wniosek: hipoteza blokady IP centrum danych była błędna.**
 
 Cały plan opierał się na obserwacji, że z adresów centrum danych handshake

@@ -754,7 +754,7 @@ brak alertów.
 
 | # | Ryzyko | Prawdopod. | Wpływ | Mitygacja | Właściciel |
 |---|---|---|---|---|---|
-| R1 | Runner zablokowany przez Akamai (dany zakres IP) | ~~wysokie~~ niskie | krytyczny → średni | **Rozstrzygnięte 4.10.2026 na runnerze: bramka przeszła** (AS8075 Azure, sklep pobrany). Kod `BlockedByIpError` zostaje jako diagnoza, nie ścieżka awaryjna; §11.1 | właściciel |
+| R1 | Runner zablokowany przez Akamai (dany zakres IP) | ~~wysokie~~ niskie | krytyczny → średni | **Rozstrzygnięte 4.10.2026, 2/2 runy** (`37183741624`, `37184256979`; różne adresy AS8075) — sklep pobrany za każdym razem. Kod `BlockedByIpError` zostaje jako diagnoza, nie ścieżka awaryjna; §11.1 | właściciel |
 | R2 | Zmiana markupu / struktury JSON-LD | średnie | średni | parser z fallbackami + testy na prawdziwych fixture'ach; `ParseError` zamiast cichego `False` | właściciel |
 | R3 | Zmiana handshake Queue-it | średnie | wysoki | test live wykrywający przed wdrożeniem; `FetchError` z liczbą hopów | właściciel |
 | R4 | Telegram niedostępny przy alertach | niskie | wysoki | 1 ponowienie + `exit 1`, żeby widać było w UI Actions | właściciel |
@@ -795,7 +795,7 @@ musi eksponować to przez `exit 1` + ostrzeżenie Telegram, a nie przez ciszę.
 
 | # | Pytanie | Wpływ |
 |---|---|---|
-| P1 | ~~Czy faza 0 da wynik pozytywny na `ubuntu-latest`?~~ | **TAK** — 4.10.2026, run `37183741624`, `hops=5`, 6 terminow |
+| P1 | ~~Czy faza 0 da wynik pozytywny na `ubuntu-latest`?~~ | **TAK** — 4.10.2026, 2/2 runy (`37183741624`, `37184256979`), `hops=5`, 6 terminow |
 | P2 | Czy `chale`/`InStock` pojawi się w JSON-LD w formie oczekiwanej przez czarną listę? | wiarygodność alertów |
 | P3 | Czy queue-it zdąży zablokować częstsze sprawdzanie niż 1/h? | częstotliwość cronu |
 | P4 | Czy cache `actions/cache` to właściwe miejsce na cookies, czy lepiej bez cache? | 5 hopów vs 1 hop |

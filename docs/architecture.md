@@ -160,7 +160,7 @@ danych (chmura Azure) — więc projekt stoi na fundamentacie, który zawodzi.
 |---|---|
 | IP domowe (ISP użytkownika, AS3320 Deutsche Telekom) | **działa** — 3/3 zimne uruchomienia, 5 hopów, ~1–2 s |
 | IP centrum danych, zakres nieznany | **nie działa deterministycznie** — ślepy zaułek na stronie marketingowej |
-| **GitHub Actions hosted runner** (AS8075 Microsoft, `172.185.143.245`) | **działa** — run `37183741624`, 4.10.2026, 5 hopów, 152 034 B, 3,7 s |
+| **GitHub Actions hosted runner** (AS8075 Microsoft) | **działa** — 2/2 runy, 4.10.2026: `172.185.143.245` i `172.208.126.101`, każdy 5 hopów, `SoldOut:6` |
 
 Z nieznanego zakresu centrum danych przebieg wygląda inaczej: hop 1 zwraca `200`
 (strona pośrednia) zamiast `302` do Queue-it, a hop po ustawieniu `cookietest`
@@ -169,7 +169,9 @@ Powtarzalne w 4/4 próbach, niezależnie od nagłówków `Sec-Fetch`.
 
 **Rozstrzygnięcie (Faza 0, 4.10.2026):** runner GitHub Actions pobrał prawdziwą stronę
 sklepu, wykonał pełne 5-hopowe handshake i zwrócił poprawny JSON-LD. Adres pochodził
-z chmury Azure — dokładnie ta kategoria, której baliśmy się.
+z chmury Azure — dokładnie ta kategoria, której baliśmy się. Zrobione to **dwa razy
+z dwoma różnymi adresami wychodzącymi** (run `37183741624` i `37184256979`, oba AS8075), co
+odróżnia wynik systematyczny od przypadkowego trafienia w dobry adres.
 
 Wniosek: **Akamai nie blokuje klasy „adres centrum danych”**, tylko konkretne,
 źle oceniane zakresy. Klasa jest zbyt szeroka, żeby z niej wyciągać wniosek
