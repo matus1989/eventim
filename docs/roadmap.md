@@ -28,7 +28,7 @@ to domknąć, zanim uznamy monitoring za działający.
 | 3 | Parser JSON-LD i model dostępności | ✅ |
 | 4 | Notyfikacja Telegram | ✅ kod + testy, **nie sprawdzone na Telegramie** |
 | 5 | Orkiestracja, awarie, cooldown | ✅ |
-| 6 | Testy i walidacja end-to-end | 🔲 |
+| 6 | Testy i walidacja end-to-end | ✅ 14 testów live, 13 przeszło na żywo |
 | 7 | Workflow i dokumentacja | 🔲 |
 | 8 | Hardening i obserwowalność | 🔲 |
 
@@ -361,6 +361,50 @@ ostrzeżenie, a kolejne niepowodzenia są wyciszone; exit code poprawny.
 dostępność na runnerze.
 
 **Zależności:** Fazy 2–5.
+
+**Stan (po implementacji):**
+
+- `tests/test_live.py` — 14 testów, `skipif EVENTIM_LIVE != "1"` + `@pytest.mark.live`.
+  W zwykłym przebiegu `pytest` są pomijane (`14 deselected`), więc zwykły CI
+  nie dotyka cudzego serwera.
+- **Przebieg na żywo 4.10.2026: 13 przeszło, 1 pominięte, 3,5 s.** Jedyny
+  pominięty to `test_dostepne_terminy_daja_poprawny_alert` — wszystkie terminy
+  są `SoldOut`, więc nie ma realnego alertu do sformatowania. To poprawne
+  zachowanie, nie luka.
+- Potwierdzone na prawdziwych danych:
+  - handshake przechodzi, JSON-LD w jednym bloku, 6 terminow jak w zrzucie;
+  - **ADR-6** — ciepły cache daje mniej niż 5 hopów,
+  - **ADR-9** — żaden termin nie ma `UNKNOWN`, czyli pole `availability`
+    nadal jest zawsze obecne. To potwierdza założenie ADR-9 **tylko dla stanu**
+    **`SoldOut`** — pełne zastrzeżenie niżej.
+
+Pułapki z listy powyżej potwierdziły się — każda dostała zabezpieczenie:
+
+| Pułapka | Zabezpieczenie |
+|---|---|
+| test live w zwykłym CI | `skipif` na zmiennej środowiskowej **oraz** osobny marker — `pytest.ini` z `--strict-markers` odmawia nieznanych markerów |
+| obciążanie cudzego serwera | jeden fixture `scope="session"` — cały plik robi **jedno** pobranie, reszta testów czyta jego wynik |
+| testy udające testy live | osobny plik, osobny marker, nazwy mówią wprost że są na żywo |
+
+### Czego testy live **nie** sprawdzają
+
+- **Dostarczania Telegrama.** Testy live kończą się na parsowaniu i nigdy
+  nie wysyłają wiadomości. Wysyłka jest jedyną nieodwracalną operacją w tym
+  repozytorium, a jedyny test, który ją wykonuje, to test jednostkowy na
+  atrapie. Realna dostarczalność pozostaje **niesprawdzona** — to zadanie Fazy 7.
+- **Stanu innego niż `SoldOut`.** Wszystkie 6 terminów jest wyprzedanych od
+  4.10.2026, więc ścieżka „bilet jest” została przetestowana wyłącznie na
+  fixture. To świadoma luka, nie pominięcie — nie da się jej zamknąć inaczej niż
+  czekając na prawdziwą dostępność.
+
+### Znalezione i naprawione błędy w samych testach
+
+Warto odnotować, bo oba były groźniejsze od braku testu:
+
+| Błąd | Skutek |
+|---|---|
+| licznik hopów podłączony do loggera bez `setLevel` | `pytest` dziedziczy po rocie `WARNING`, więc `logger.info()` nigdzie nie docierało i licznik widział zero rekordów. Test `0 < 5` przechodził **w próżni** — nie bledzie, tylko kłamie |
+| test higieny skanujący własne źródło | znajdował własną linię asercji, więc nie mógł przejść nigdy. Test, który z definicji pada, uczy czytelnika ignorować plik |
 
 ---
 
