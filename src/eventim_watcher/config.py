@@ -107,7 +107,12 @@ class ConfigError(Exception):
         super().__init__(self._render())
 
     def _render(self) -> str:
-        lines = [f"Niepoprawna konfiguracja - znaleziono {len(self.problems)} problemow:"]
+        # Bez licznika z premedytacja: jedna pozycja `problems` moze wymieniac
+        # kilka zmiennych (brak sekretow to jeden wpis z dwiema nazwami), wiec
+        # "znaleziono 1 problemow" przy dwóch brakujacych zmiennych klamie
+        # i podpowiada, ze poprawienie jednej wystarczy. Uzytkownik ma
+        # przeczytac liste, nie policzyc ja w glowie.
+        lines = ["Niepoprawna konfiguracja - problemy:"]
         lines.extend(f"  - {p}" for p in self.problems)
         lines.append("")
         lines.append(_HINT)

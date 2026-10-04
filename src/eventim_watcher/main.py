@@ -36,6 +36,7 @@ import logging
 import os
 import sys
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 import requests
@@ -59,6 +60,7 @@ from eventim_watcher.state import (
     FileStateStore,
     StateStore,
     availability_state,
+    format_timestamp,
     mark_anomaly_notified,
     mark_check_failed,
     mark_check_ok,
@@ -95,6 +97,63 @@ def _configure_logging(level_name: str) -> None:
     root.setLevel(level)
 
 
+#: Możliwe wartości :attr:`Raport.wynik`. Jedno słowo, bez posrodków —
+#: opis po ludzku doklejamy dopiero w :func:`render_step_summary`.
+WYNIK_BRAK = "brak"
+WYNIK_ALERT = "alert"
+WYNIK_BLAD_ALERTA = "blad_alerta"
+WYNIK_BLAD_POBRANIA = "blad_pobrania"
+WYNIK_ANOMALIA = "anomalia"
+WYNIK_KONFIGURACJA = "blad_konfiguracji"
+
+#: Co stało się z wysyłką. Osobne od :attr:`Raport.wynik`, bo "awaria pobrania
+#: z ostrzeżeniem" i "awaria pobrania wyciszona cooldownem" to dwa różne
+#: przebiegi, a czytelnik podsumowania musi je rozróżnić.
+WYSYLKA_BRAK = "nie_naszla"
+WYSYLKA_WYSLANA = "wyslana"
+WYSYLKA_WYCISZONA = "wyciszona_cooldownem"
+WYSYLKA_BLAD = "blad"
+
+_OPIS_WYNIKU = {
+    WYNIK_BRAK: "Sprawdzone — brak dostępnych terminów",
+    WYNIK_ALERT: "Bilet dostępny — alert wysłany",
+    WYNIK_BLAD_ALERTA: "Bilet dostępny, ale wiadomość nie dotarła",
+    WYNIK_BLAD_POBRANIA: "Nie udało się sprawdzić",
+    WYNIK_ANOMALIA: "Sprawdzone, ale część terminów ma nieznany stan",
+    WYNIK_KONFIGURACJA: "Błąd konfiguracji",
+}
+
+_OPIS_WYSYLKI = {
+    WYSYLKA_BRAK: "nie naszła (nie było czego wysyłać)",
+    WYSYLKA_WYSLANA: "wysłana",
+    WYSYLKA_WYCISZONA: "wyciszona — trwa cooldown",
+    WYSYLKA_BLAD: "błąd wysyłki",
+}
+
+
+@dataclass
+class Raport:
+    """Wynik jednego sprawdzenia, w formie wygodnej do pokazania człowiekowi.
+
+    Nie zwracamy tego z :func:`run`, bo :func:`run` zwraca ``int`` i tak go
+    używają testy orkiestracji. Wypełniamy raport w miejscu, gdzie liczby
+    są już policzone — zamiast odtwarzać je na końcu z własnych logów.
+    Parsowanie własnych komunikatów byłoby najsłabszym ogniwem całej ścieżki:
+    zmiana formatu logu po cichu zamieniłaby podsumowanie w kłamstwo.
+
+    Wszystkie pola mają wartości domyślne, bo :func:`run` może przerwać się
+    w dowolnym miejscu, a puste podsumowanie jest lepsze niż żadne.
+    """
+
+    wynik: str = WYNIK_BRAK
+    wysylka: str = WYSYLKA_BRAK
+    nazwa_serii: str = ""
+    terminow: int = 0
+    dostepnych: int = 0
+    nieznanych: int = 0
+    szczegol: str = ""
+
+
 # -- orkiestracja -----------------------------------------------------------
 
 
@@ -104,6 +163,7 @@ def run(
     session: requests.Session,
     *,
     now: datetime | None = None,
+    raport: Raport | None = None,
 ) -> int:
     """Wykonuje jedno sprawdzenie i zwraca kod wyjscia.
 
@@ -146,10 +206,14 @@ def run(
             "[blad] sprawdz dostepne materialy planu awaryjnego "
             "(docs/technical-plan.md 11.1) - to nie jest chwilowa awaria sieci"
         )
-        return _handle_fetch_failure(store, notifier, config, stan, chwila, cooldown, str(exc))
+        return _handle_fetch_failure(
+            store, notifier, config, stan, chwila, cooldown, str(exc), raport
+        )
     except FetchError as exc:
         log.error("[blad] pobieranie nieudane: %s", exc)
-        return _handle_fetch_failure(store, notifier, config, stan, chwila, cooldown, str(exc))
+        return _handle_fetch_failure(
+            store, notifier, config, stan, chwila, cooldown, str(exc), raport
+        )
 
     # -- parsowanie --------------------------------------------------------
 
@@ -160,7 +224,9 @@ def run(
         # ale nie da sie z niej korzystac, wiec obie sciezki koncza sie tak samo.
         log.error("[blad] parsowanie nieudane: %s", exc)
         log.error("[blad] sklep zwrocil strone bez czytelnego JSON-LD - mozliwa zmiana ukladu")
-        return _handle_fetch_failure(store, notifier, config, stan, chwila, cooldown, str(exc))
+        return _handle_fetch_failure(
+            store, notifier, config, stan, chwila, cooldown, str(exc), raport
+        )
 
     # -- stan po udanym sprawdzeniu (PRZED wysylka) ------------------------
 
@@ -198,6 +264,12 @@ def run(
         len(series.unknown_terms),
     )
 
+    if raport is not None:
+        raport.nazwa_serii = series.name
+        raport.terminow = len(series.terms)
+        raport.dostepnych = len(series.available_terms)
+        raport.nieznanych = len(series.unknown_terms)
+
     # -- alert o dostepnosci -----------------------------------------------
 
     if series.any_available:
@@ -210,16 +282,24 @@ def run(
             # Nie wyciszamy: bilety sa, komunikat nie dotarl. To sytuacja
             # wymagajaca reakcji, wiec run musi byc widoczny jako blad.
             log.error("[telegram] alert o dostepnosci nie zostal wyslany: %s", exc)
+            if raport is not None:
+                raport.wynik = WYNIK_BLAD_ALERTA
+                raport.wysylka = WYSYLKA_BLAD
             return EXIT_FAILURE
         log.info("[telegram] alert wyslany (%d wiadomosci)", wyslane)
+        if raport is not None:
+            raport.wynik = WYNIK_ALERT
+            raport.wysylka = WYSYLKA_WYSLANA
     else:
         log.info("[telegram] brak dostepnych terminow - nie wysylam alertu")
+        if raport is not None:
+            raport.wynik = WYNIK_BRAK
 
     # -- anomalia braku pola availability (ADR-9) ---------------------------
 
     if series.has_unknown:
         return _handle_unknown_availability(
-            store, notifier, series, stan, chwila, cooldown
+            store, notifier, series, stan, chwila, cooldown, raport
         )
 
     return EXIT_OK
@@ -233,6 +313,7 @@ def _handle_fetch_failure(
     chwila: datetime,
     cooldown: timedelta,
     przyczyna: str,
+    raport: Raport | None = None,
 ) -> int:
     """Ostrzega o awarii z cooldownem i zwraca ``EXIT_FAILURE``.
 
@@ -240,6 +321,10 @@ def _handle_fetch_failure(
     **poprzedniego** uruchomienia, wiec stan oznaczamy jako nieudany dopiero
     po decyzji. Odwrotna kolejność wyciszyłaby pierwsze ostrzeżenie po awarii.
     """
+    if raport is not None:
+        raport.wynik = WYNIK_BLAD_POBRANIA
+        raport.szczegol = przyczyna
+
     ostrzec = should_warn(stan, moment=chwila, cooldown=cooldown)
     mark_check_failed(stan, moment=chwila)
     # Cookies zostawiamy bez zmian - token moze wciaz dzialac.
@@ -249,6 +334,8 @@ def _handle_fetch_failure(
             "[awaria] powtorka w trakcie cooldownu (%g h) - wysylka wyciszona",
             config.error_cooldown_hours,
         )
+        if raport is not None:
+            raport.wysylka = WYSYLKA_WYCISZONA
 
     if ostrzec:
         tekst = format_fetch_error(
@@ -263,9 +350,13 @@ def _handle_fetch_failure(
             # Nie podnosimy: pierwotny blad pobrania jest wazniejszy i jest
             # juz w logu. Rzucanie tutaj zgubiloby przyczyne.
             log.error("[telegram] ostrzezenia o awarii nie udalo sie wyslac: %s", exc)
+            if raport is not None:
+                raport.wysylka = WYSYLKA_BLAD
         else:
             mark_error_notified(stan, moment=chwila)
             log.info("[telegram] ostrzezenie o awarii wyslane")
+            if raport is not None:
+                raport.wysylka = WYSYLKA_WYSLANA
 
     store.save(stan)
     return EXIT_FAILURE
@@ -278,14 +369,24 @@ def _handle_unknown_availability(
     stan: dict,
     chwila: datetime,
     cooldown: timedelta,
+    raport: Raport | None = None,
 ) -> int:
     """Ostrzega o anomalii braku pola ``availability`` i zwraca ``EXIT_FAILURE``.
 
     Kanal ostrzegania jest osobny od kanału awarii pobierania — patrz
     :func:`eventim_watcher.state.should_warn_anomaly`.
     """
+    if raport is not None:
+        raport.wynik = WYNIK_ANOMALIA
+        raport.nazwa_serii = series.name
+        raport.terminow = len(series.terms)
+        raport.dostepnych = len(series.available_terms)
+        raport.nieznanych = len(series.unknown_terms)
+
     if not should_warn_anomaly(stan, moment=chwila, cooldown=cooldown):
         log.warning("[anomalia] powtorka w trakcie cooldownu - wysylka wyciszona")
+        if raport is not None:
+            raport.wysylka = WYSYLKA_WYCISZONA
     else:
         tekst = format_unknown_availability(series, now=chwila)
         try:
@@ -294,16 +395,110 @@ def _handle_unknown_availability(
             # Nie podnosimy — run i tak jest czerwony, a przyczyna anomalii
             # jest juz w logu parsera.
             log.error("[telegram] ostrzezenia o anomalii nie udalo sie wyslac: %s", exc)
+            if raport is not None:
+                raport.wysylka = WYSYLKA_BLAD
         else:
             mark_anomaly_notified(stan, moment=chwila)
             log.info("[telegram] ostrzezenie o anomalii wyslane")
+            if raport is not None:
+                raport.wysylka = WYSYLKA_WYSLANA
 
     store.save(stan)
     # Run jest czerwony: monitoring dziala, ale nie dla wszystkich terminow.
     return EXIT_FAILURE
 
 
-# -- wejscie CLI ------------------------------------------------------------
+# -- podsumowanie runu i wejscie CLI --------------------------------------
+
+
+def render_step_summary(
+    raport: Raport,
+    config: Config | None = None,
+    *,
+    moment: datetime | None = None,
+) -> str:
+    """Buduje podsumowanie runu w Markdownzie dla ``$GITHUB_STEP_SUMMARY``.
+
+    Cel: kto otwiera zakładkę Actions po tygodniu ma w jednym miejscu
+    odpowiedź na trzy pytania — czy monitoring żyje, co widział i czy
+    coś wysłał. Sam log tego nie daje, bo przewija się i ginie w cudzym
+    szumie.
+
+    Świadomie **nie** czytamy pliku stanu: opisujemy bieżące sprawdzenie.
+    Plik stanu mówi, co było ostatnio zapisane, a po nieudanym zapisie —
+    w ogóle nic. Podsumowanie musi mówić o tym runie, nie o poprzednim.
+    """
+    chwila = moment if moment is not None else now_utc()
+    opis = _OPIS_WYNIKU.get(raport.wynik, raport.wynik)
+
+    wiersze = [
+        f"| Terminów w serii | {raport.terminow} |",
+        f"| Dostępnych | {raport.dostepnych} |",
+        f"| Nieznanych (brak pola `availability`) | {raport.nieznanych} |",
+        f"| Wiadomość na Telegramie | {_OPIS_WYSYLKI.get(raport.wysylka, raport.wysylka)} |",
+    ]
+    if raport.nazwa_serii:
+        wiersze.insert(0, f"| Seria | {raport.nazwa_serii} |")
+    if config is not None:
+        wiersze.append(f"| Adres | `{config.target_url}` |")
+
+    linie = [
+        "## Sprawdzenie dostępności biletów",
+        "",
+        f"**{opis}**",
+        "",
+        "| | |",
+        "|---|---|",
+        *wiersze,
+        "",
+        f"_Sprawdzone {format_timestamp(chwila)}, `eventim-watch {__version__}`._",
+    ]
+
+    if raport.szczegol:
+        # Inline code nie przenosi znakow nowej linii: blad konfiguracji
+        # jest wielolinijkowy i w renderze zlepilby sie w jeden bezsensowny
+        # akapit. Nawias odwracajacy to samo dla tekstu z backtickiem.
+        if "\n" in raport.szczegol or "`" in raport.szczegol:
+            linie += ["", "Szczegół:", "", "```text", raport.szczegol.rstrip(), "```"]
+        else:
+            linie += ["", f"Szczegół: `{raport.szczegol}`"]
+
+    if raport.wynik in (WYNIK_ALERT, WYNIK_BLAD_ALERTA):
+        linie += [
+            "",
+            "Dostępność w sklepie zmienia się z minutą na minutę, więc link "
+            "w wiadomości na Telegramie może być już nieaktualny.",
+        ]
+    if raport.wynik == WYNIK_ANOMALIA:
+        linie += [
+            "",
+            "Terminy o nieznanym stanie są traktowane jako niedostępne "
+            "(ADR-9). Alert o biletach mimo to mógł już pójść — patrz "
+            "`docs/architecture.md`.",
+        ]
+
+    return "\n".join(linie) + "\n"
+
+
+def _zapisz_podsumowanie(
+    srodowisko: Mapping[str, str],
+    raport: Raport,
+    config: Config | None = None,
+) -> None:
+    """Dopisuje podsumowanie do ``$GITHUB_STEP_SUMMARY``, jeśli jest ustawione.
+
+    Nigdy nie rzuca. Podsumowanie jest ozdobą, a brak nieba nie może zamienić
+    zielonego runu w czerwony — najgorsze, co może się stać, to cicha jego
+    nieobecność.
+    """
+    sciezka = srodowisko.get("GITHUB_STEP_SUMMARY")
+    if not sciezka:
+        return
+    try:
+        with open(sciezka, "a", encoding="utf-8") as plik:
+            plik.write(render_step_summary(raport, config))
+    except OSError as exc:
+        log.warning("nie udalo sie zapisac podsumowania runu: %s", exc)
 
 
 def main(
@@ -341,6 +536,10 @@ def main(
         # Czytelny komunikat na stderr i kod 1. Nigdy nie KeyError.
         print(exc, file=sys.stderr)
         log.error("koniec: konfiguracja niepoprawna")
+        _zapisz_podsumowanie(
+            env if env is not None else os.environ,
+            Raport(wynik=WYNIK_KONFIGURACJA, szczegol=str(exc)),
+        )
         return EXIT_FAILURE
 
     log.info("[config] %s", config.summary())
@@ -359,9 +558,17 @@ def main(
 
     magazyn = store if store is not None else FileStateStore(config.state_path)
     sesja = session if session is not None else new_session()
+    srodowisko = env if env is not None else os.environ
+    raport = Raport()
 
     try:
-        return run(config, magazyn, sesja)
+        kod = run(config, magazyn, sesja, raport=raport)
     except KeyboardInterrupt:  # pragma: no cover - przerwanie przez operatora
         log.warning("koniec: przerwano przez uzytkownika")
+        raport.wynik = WYNIK_KONFIGURACJA
+        raport.szczegol = "przerwano przez uzytkownika"
+        _zapisz_podsumowanie(srodowisko, raport, config)
         return EXIT_FAILURE
+
+    _zapisz_podsumowanie(srodowisko, raport, config)
+    return kod

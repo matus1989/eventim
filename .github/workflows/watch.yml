@@ -1,0 +1,94 @@
+# CODZIENNY monitoring: sprawdza dostepnosc biletow raz na godzine.
+#
+# To jest wlasciwy monitoring. `probe.yml` jest diagnostyka - odpala sie
+# recznie i nic nie wysyla. Kazdy push wywolujacy `probe.yml` bylby mierzony
+# w minutach limitu crona, a blama push-triggered niczego nie mowi, czego nie
+# powiedzialby ten plik.
+#
+# Cztery rzeczy, ktore latwo skopiowac bez zastanowienia:
+#
+# 1. **Sekret tylko przez `secrets.*`.** `vars.*` nie chroni niczego, a GitHub
+#    pokazuje ich wartosc w logu. `EVENTIM_TARGET_URL` idzie przez `vars.*`
+#    tylko dlatego, ze nie jest sekretem i ma byc edytowalny bez rotacji
+#    sekretow.
+# 2. **Bez `pull_request`.** W PR-ach sekrety sa niedostepne, wiec taki trigger
+#    czerwienilby sie na sekretach, ktorych tam z definicji nie ma. Testy na
+#    pushu to osobny `ci.yml`, a nie godzina co godzine.
+# 3. **`concurrency` bez `cancel-in-progress`.** Kanapujace sie sprawdzenia o nic
+#    nie dobrego: alert o biletach i tak wyjdzie z tego, ktore skonczy sie
+#    pierwsze, a drugie tylko zmarnuje limit crona.
+# 4. **Cache cookies jest optymalizacja, nie poprawnosc.** Wywiektowany po 7
+#    dniach cache oznacza zimne pobranie (piec hopow, ~1,2 s zamiast ~0,1 s) -
+#    wynik identyczny. `tests/test_main.py::test_poprawnosc_nie_zalezy_od_cache`
+#    pilnuje, zeby ta degradacja byla faktycznie bezpieczna.
+#
+# `pytest -m "not live"` przed wlasciwym krokiem kosztuje ok. 25 s na godzine
+# (ok. 300 min/mies. z limitu ~2000). Jest celowe: zielony run mowi, ze
+# checkout i instalacja sa sprawne, wiec godzinowy check ma sensowny kod
+# bazowy. Gdyby to przeszkadzalo w limicie crona - przeniesc do `ci.yml`
+# na `push`, bo testy sprawdzaja nasz kod, a ten zmienia sie tylko przy
+# zmianach w repozytorium.
+
+name: Watch tickets
+
+on:
+  schedule:
+    # 17 min po pelnej godzinie, nie "0 * * * *". Uruchomienia w szczycie
+    # minuty koncentruja sie na GitHub i bywaja opoznione o kilkanaście minut.
+    # Cena: 17 min po pelnej godzinie.
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read # minimalne: job nie pisze nic do repozytorium
+
+concurrency:
+  group: ticket-watch
+  cancel-in-progress: false # nie kasujemy trwajacego sprawdzenia
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Wiszace zadanie HTTP marnuje budzet crona. Realnie wystarcza ~2 s;
+    # 10 min to zapas na ciezki dzień, nie na czekanie w nieskonczonosc.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalacja
+        run: pip install -e ".[dev]"
+
+      # Zmiana w repozytorium nie moze wywolac alertu, dopoki nie przeszla
+      # testow - mimo ze w tym pliku nie ma sekretow.
+      - name: Testy jednostkowe (bez sieci)
+        run: pytest -q -m "not live"
+
+      # `.cache/eventim-state.json` trzyma cookies sesji Queue-it. Bez nich
+      # kazde godzinne pobranie zaczyna od pieciohopowego handshake'u.
+      # Katalog jest w `.gitignore`, wiec nigdy nie trafi do repozytorium.
+      - name: Cache cookies sesji
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          # Klucz unikalny na przebieg: przy stalym kluczu GitHub zapisuje tylko
+          # wtedy, gdy go nie bylo, a cookies zmieniaja sie po kazdym ruchu.
+          key: eventim-state-${{ github.run_id }}
+          restore-keys: eventim-state-
+
+      # Brak sekretu konczy sie czytelnym `ConfigError` i kodem 1 - nie
+      # `KeyError` z tracebackiem. Program zgłasza *komplet* braków naraz,
+      # zeby nie poprawiać po jednym i nie marnować limitu crona.
+      - name: Sprawdzenie dostepnosci
+        env:
+          EVENTIM_TARGET_URL: ${{ vars.EVENTIM_TARGET_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        # Kod wyjscia 1 tu nie jest bledem konfiguracji, tylko sygnałem:
+        # "nie udało się sprawdzić" albo "nie udało się wysłać alertu".
+        # Zielony run znaczy tylko tyle, że sprawdzenie się wykonało.
+        run: python -m eventim_watcher

@@ -339,6 +339,8 @@ z Fazy 5.
 | ADR-9 | Brak pola `availability` = `UNKNOWN`, **nie** alert | traktowanie braku danych jak dostępności | zmiana markupu zasypywałaby fałszywymi alarmami; `UNKNOWN` raportowany osobno (Faza 5) |
 | ADR-10 | Osobny kanał ostrzegania dla anomalii (`last_anomaly_notified_at`) | jeden wspólny znacznik czasu z ADR-7 | wspólny znacznik pozwala świeżej anomalii zniknąć pod cudzym cooldownem — ciche pominięcie najgorszego rodzaju |
 | ADR-11 | `last_availability_state` **nie** steruje powiadomieniami | alert tylko przy zmianie stanu | wymaganie właściciela: ostrzegać przy każdym uruchomieniu, gdy bilety są; deduplikacja uciszyłaby monitoring właśnie wtedy, gdy działa |
+| ADR-12 | Podsumowanie runu (`Raport`) budowane **w miejscu** danych, nie parsowane z logów | rekonstrukcja liczb z własnych komunikatów log | zmiana formatu logu po cichu zamienia podsumowanie w kłamstwo, a czytelnik nie ma jak tego zauważyć — podsumowanie jest właśnie miejscem, gdzie człowiek szuka odpowiedzi na pytanie „czy ono w ogóle działa” |
+| ADR-13 | Zapis podsumowania **nigdy nie rzuca** wyjątkiem | konwencja `raise` przy błędzie I/O | brak prawa do zapisu zamieniłby zielony run w czerwony; podsumowanie jest ozdobą, a ozdoba nie może kosztować działania |
 
 ## 4. Przepływ decyzyjny uruchomienia
 

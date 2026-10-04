@@ -666,7 +666,12 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -e ".[dev]"
-      - run: pytest -q -m "not live"
+      - run: pytest -q -m "not live"          # patrz koszt poniżej
+      - uses: actions/cache@v4
+        with:
+          path: .cache
+          key: eventim-state-${{ github.run_id }}
+          restore-keys: eventim-state-
       - run: python -m eventim_watcher
         env:
           EVENTIM_TARGET_URL: ${{ vars.EVENTIM_TARGET_URL }}
@@ -689,6 +694,29 @@ pierwsze, a drugie tylko zmarnuje limit crona.
 wiszące żądanie HTTP to marnowanie budżetu. Limit 10 min to ~30× więcej niż realnie
 potrzeba (zimne pobranie ~2 s).
 
+**`key` cache oparty o `github.run_id`, nie o stały napis.** Przy stałym
+kluczu `actions/cache` zapisuje tylko wtedy, gdy kluczu wcześniej nie było,
+więc zapisałby się raz i już nigdy więcej — choć cookies zmieniają się
+po każdym ruchu. `restore-keys` daje fallback: pierwszy run repo jest zimny,
+kolejne ciepłe.
+
+**Job summary z obiektu `Raport`, nie z parsowania logów.** Gdyby podsumowanie
+powstawało z odtwarzania własnych komunikatów, zmiana formatu logu po cichu
+zamieniłaby je w kłamstwo — a czytelnik podsumowania nie ma jak tego zauważyć.
+`run()` wypełnia strukturę danych tam, gdzie liczby są już policzone, a
+renderowanie jest osobną, testowalną funkcją. Zobacz ADR-12.
+
+**`_zapisz_podsumowanie()` nigdy nie rzuca.** Brak prawa do zapisu nie może
+zamienić zielonego runu w czerwony. Najgorsze, co może się stać, to cicha
+nieobecność podsumowania.
+
+**`pytest` w pętli godzinowej kosztuje świadomie.** Około 25 s na godzinę,
+czyli ~300 min/mies. z limitu ~2000. Za to zielony run potwierdza, że
+checkout i instalacja są sprawne, więc godzinowy check ma sensowny kod
+bazowy. Testy sprawdzają nasz kod, a ten zmienia się przy zmianach
+w repozytorium — jeśli limit crona zacznie przeszkadzać, przenosimy je do
+`ci.yml` na `push`, a nie usuwamy.
+
 **Sekret kontra `vars`.** `TELEGRAM_BOT_TOKEN` wyłącznie przez `secrets.*`.
 `EVENTIM_TARGET_URL` nie jest sekretem, więc idzie przez `vars.*` —
 i dzięki temu jest edytowalny bez rotacji sekretów.
@@ -697,10 +725,11 @@ i dzięki temu jest edytowalny bez rotacji sekretów.
 że zmiana niczego nie zepsuła, zanim wysyłka Telegram pójdzie w świat.
 
 **Brak `pull_request`-triggerów.** W PR-ach sekrety są niedostępne, więc test
-wymagający tokenu tylko by czerwienił. Osobny `lint.yml` może działać na PR-ach.
-
-**Job summary.** `$GITHUB_STEP_SUMMARY` z liczbą terminów i statusem —
-czytelne bez otwierania logów.
+wymagający tokenu tylko by czerwienił. Testy odpalają się dziś wewnątrz
+`watch.yml`; osobny `ci.yml` na `push` byłby sensownym następnym krokiem
+(Faza 8). Do czasu jego powstania jedynym pokwitowaniem zmiany jest
+godzinne sprawdzenie — a tam wynik testów jest popity w jednym przebiegu
+z alertem, więc trudno odróżnić „test nie przeszedł” od „nie ma biletów”.
 
 ### Sekrety do zdefiniowania
 
@@ -709,6 +738,11 @@ czytelne bez otwierania logów.
 | `TELEGRAM_BOT_TOKEN` | secret | repo → Settings → Secrets |
 | `TELEGRAM_CHAT_ID` | secret | repo → Settings → Secrets |
 | `EVENTIM_TARGET_URL` | variable | repo → Settings → Variables |
+
+Nowa zmienna musi być wypełniona w **każdym** workflow, który ma do niej
+dostęp — samo `vars.*` w jednym pliku niczego nie robi.
+`tests/test_workflow.py::test_zaden_krok_nie_zawiera_literalu_w_looku_sekretu`
+pilnuje, żeby żadna zmienna nie została wpisana na sztywno.
 
 ### Pułapki
 

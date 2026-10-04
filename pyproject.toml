@@ -18,6 +18,10 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "responses>=0.25",
+    # Tylko do `tests/test_workflow.py` — pilnuje, ze sekrety w `watch.yml`
+    # sa czytane z `secrets.*`, a nie z `vars.*`. Bez parsera plikow workflow
+    # nie da sie przetestowac, a regresja jest cicha.
+    "pyyaml>=6.0",
 ]
 
 [project.scripts]

@@ -29,7 +29,7 @@ to domknąć, zanim uznamy monitoring za działający.
 | 4 | Notyfikacja Telegram | ✅ kod + testy, **nie sprawdzone na Telegramie** |
 | 5 | Orkiestracja, awarie, cooldown | ✅ |
 | 6 | Testy i walidacja end-to-end | ✅ 14 testów live, 13 przeszło na żywo |
-| 7 | Workflow i dokumentacja | 🔲 |
+| 7 | Workflow i dokumentacja | ✅ kod gotowy — ⏳ do wdrożenia (sekrety) |
 | 8 | Hardening i obserwowalność | 🔲 |
 
 ---
@@ -425,8 +425,10 @@ Warto odnotować, bo oba były groźniejsze od braku testu:
   - `actions/checkout@v4`, `actions/setup-python@v5` (cache `pip`), `actions/cache@v4`.
   - Sekrety przez `${{ secrets.* }}` — **nigdy** przez `vars`.
   - Job summary (`$GITHUB_STEP_SUMMARY`) — czytelny raport w UI.
-- `README.md` — opis, instrukcja konfiguracji sekretów, lokalne uruchomienie,
-  tabela „co oznacza status runa”.
+- `Readme.md` — opis, instrukcja konfiguracji sekretów, lokalne uruchomienie,
+  tabela „co oznacza status runa”. Nazwa z małym `m` **celowo**: to ją podaje
+  `pyproject.toml` w polu `readme`. Na systemie plików z rozróżnianiem
+  wielkości liter literówka rozbiłaby `pip install -e .`.
 - Sekrety do zdefiniowania: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`.
 
 **Pułapki:**
@@ -439,6 +441,73 @@ Warto odnotować, bo oba były groźniejsze od braku testu:
 i widać raport; cron zaświeci się w zakładce Actions.
 
 **Zależności:** Fazy 5, 6.
+
+**Stan (po implementacji):**
+
+| Plik | Co wnosi |
+|---|---|
+| `.github/workflows/watch.yml` | monitoring: cron 17 min po pełnej godzinie + `workflow_dispatch` |
+| `src/eventim_watcher/main.py` | `Raport`, `render_step_summary()`, `_zapisz_podsumowanie()` |
+| `tests/test_summary.py` | 40 testów podsumowania |
+| `tests/test_workflow.py` | 18 testów kontraktu plików workflow |
+| `Readme.md` | pełna dokumentacja dla użytkownika |
+| `pyproject.toml` | `pyyaml` w zależnościach `dev` |
+
+### Odstępstwo od planu: `pyyaml` w zależnościach `dev`
+
+Plan nie przewidywał parsera YAML, a `tests/test_workflow.py` bez niego nie da się
+napisać. Jedna zależność dev, która zamienia regresję cichą w widoczną.
+
+### Podsumowanie runu
+
+`$GITHUB_STEP_SUMMARY` powstaje z obiektu `Raport`, **nie** z parsowania logów
+(ADR-12). Liczby wypełniane są tam, gdzie są już policzone, w każdej gałęzi
+`run()` — również na ścieżce anomalii, która nie przechodzi przez główny blok.
+
+`_zapisz_podsumowanie()` nigdy nie rzuca (ADR-13): brak prawa do zapisu nie może
+zamienić zielonego runu w czerwony. Podsumowanie powstaje też przy błędzie
+konfiguracji, bo to najczęstszy błąd wdrożenia i właśnie wtedy zakładka Actions
+pokazuje pustkę.
+
+### Testy workflow jako zabezpieczenie cichej regresji
+
+Najgroźniejszy błąd w tym pliku to przesunięcie `secrets.*` do `vars.*`: nic się
+nie wywala, `pytest` jest zielony, a GitHub wypisuje token jawnym tekstem przy
+każdym uruchomieniu. `tests/test_workflow.py` pilnuje tego pozytywnie
+(sekrety czytane z `secrets.*`) i **negatywnie** (brak `push`, brak
+`pull_request`, `probe.yml` bez crona, testy przed wysyłką).
+
+### Drobna poprawka w `config.py`
+
+Nagłówek `ConfigError` zgłaszał „znaleziono 1 problemów”, wymieniając dwie
+brakujące zmienne — sugerowało to, że wystarczy poprawić jedną. Licznik
+usunięty, lista bez zmian. Komunikat jest pierwszą rzeczą, którą wdrażający
+widzi po źle ustawionych sekretach, więc „1 problemów" przy dwóch brakach
+kosztowało realny czas.
+
+### Czego ta faza **nie** robi
+
+**Nie ustawia sekretów — bo nie ma ich wartości.** Token bota i ID czatu zna
+tylko właściciel. `gh secret set` umiałby je wgrać, ale nie ma czego wgrać,
+więc kroki są opisane w `Readme.md`, sekcja „Wdrożenie”. Do czasu ustawienia:
+
+- żaden run `watch.yml` nie był wykonany,
+- **dostarczalność Telegrama pozostaje niesprawdzona** — jedyna rzecz w całym
+  projekcie potwierdzona tylko na atrapach,
+- kryterium zakończenia fazy („ręczne uruchomienie przechodzi i widać raport”)
+  nie jest spełnione i nie może być spełnione bez właściciela repozytorium.
+
+Kolejny krok dla właściciela: skopiować dwie nazwy z `Readme.md`, sekcja
+„Wdrożenie”, do **Settings → Secrets and variables → Actions**, potem
+**Run workflow** i spojrzeć na Summary. Przy wszystkich terminach wyprzedanych
+nie będzie alertu — i to jest wynik poprawny, nie awaria.
+
+### Wydatek, który warto znać
+
+`pytest -m "not live"` wewnątrz pętli godzinowej to ok. 25 s na godzinę, czyli
+~300 min/mies. z limitu ~2000 na repo publicznym. Kupuje jedno: pewność, że
+checkout i instalacja są sprawne, zanim program napisze do świata. Jeśli limit
+zacznie przeszkadzać, testy przenoszą się do `ci.yml` na `push` — nie usuwają.
 
 ---
 
